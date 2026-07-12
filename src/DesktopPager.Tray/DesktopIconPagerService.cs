@@ -7,8 +7,10 @@ public sealed class DesktopIconPagerService : IDesktopIconPagerService
     private readonly int _spacingX;
     private readonly int _spacingY;
     private readonly int _hiddenOffsetMultiplier;
-    private Dictionary<int, Point>? _baselineIconPositions;
     private Dictionary<int, Point>? _baselineSlotPositions;
+    private int? _lastAppliedPage;
+    private int? _lastIconsPerPage;
+    private int? _lastIconCount;
 
     public DesktopIconPagerService(int spacingX = 90, int spacingY = 90, int hiddenOffsetMultiplier = 6)
     {
@@ -24,12 +26,77 @@ public sealed class DesktopIconPagerService : IDesktopIconPagerService
 
     public bool ApplyPageLayout(int currentPage, int iconsPerPage)
     {
-        if (!EnsureBaselineLayout())
+        try
+        {
+            if (!EnsureBaselineLayout())
+            {
+                return false;
+            }
+
+            if (!NativeDesktopApi.TryGetDesktopClientRectangle(out var desktopArea))
+            {
+                return false;
+            }
+
+            var iconCount = GetDesktopIconCount();
+            if (iconCount <= 0)
+            {
+                return true;
+            }
+
+            var targetPositions = IconPositioningEngine.CalculatePagePositions(
+                iconCount,
+                currentPage,
+                iconsPerPage,
+                desktopArea,
+                _spacingX,
+                _spacingY,
+                _hiddenOffsetMultiplier,
+                _baselineSlotPositions ?? new Dictionary<int, Point>());
+
+            var success = true;
+            foreach (var iconIndex in ComputeAffectedIndices(iconCount, currentPage, iconsPerPage))
+            {
+                if (targetPositions.TryGetValue(iconIndex, out var position))
+                {
+                    success &= NativeDesktopApi.TrySetDesktopIconPosition(iconIndex, position);
+                }
+            }
+
+            if (success)
+            {
+                _lastAppliedPage = currentPage;
+                _lastIconsPerPage = iconsPerPage;
+                _lastIconCount = iconCount;
+            }
+
+            return success;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public bool EnsureBaselineLayout()
+    {
+        if (_baselineSlotPositions is not null)
+        {
+            return true;
+        }
+
+        if (!NativeDesktopApi.TryGetDesktopClientRectangle(out var desktopArea))
         {
             return false;
         }
 
-        if (!NativeDesktopApi.TryGetDesktopClientRectangle(out var desktopArea))
+        _baselineSlotPositions = BuildDeterministicSlots(desktopArea, _spacingX, _spacingY, maxSlots: 1000);
+        return true;
+    }
+
+    public bool RestoreBaselineLayout()
+    {
+        if (!EnsureBaselineLayout() || _baselineSlotPositions is null)
         {
             return false;
         }
@@ -40,60 +107,66 @@ public sealed class DesktopIconPagerService : IDesktopIconPagerService
             return true;
         }
 
-        var targetPositions = IconPositioningEngine.CalculatePagePositions(
-            iconCount,
-            currentPage,
-            iconsPerPage,
-            desktopArea,
-            _spacingX,
-            _spacingY,
-            _hiddenOffsetMultiplier,
-            _baselineSlotPositions ?? new Dictionary<int, Point>());
-
         var success = true;
-        foreach (var (iconIndex, position) in targetPositions)
+        foreach (var iconIndex in Enumerable.Range(0, iconCount))
         {
+            var slotIndex = iconIndex % _baselineSlotPositions.Count;
+            var position = _baselineSlotPositions[slotIndex];
             success &= NativeDesktopApi.TrySetDesktopIconPosition(iconIndex, position);
+        }
+
+        if (success)
+        {
+            _lastAppliedPage = 1;
+            _lastIconsPerPage = null;
+            _lastIconCount = iconCount;
         }
 
         return success;
     }
 
-    public bool EnsureBaselineLayout()
+    private static Dictionary<int, Point> BuildDeterministicSlots(
+        Rectangle area,
+        int spacingX,
+        int spacingY,
+        int maxSlots)
     {
-        if (_baselineIconPositions is not null && _baselineSlotPositions is not null)
+        var slots = new Dictionary<int, Point>(maxSlots);
+        var maxColumns = Math.Max(1, area.Width / spacingX);
+
+        for (var slot = 0; slot < maxSlots; slot++)
         {
-            return true;
+            var col = slot % maxColumns;
+            var row = slot / maxColumns;
+            slots[slot] = new Point(area.Left + 8 + (col * spacingX), area.Top + 8 + (row * spacingY));
         }
 
-        if (!NativeDesktopApi.TryGetDesktopIconPositions(out var currentPositions))
-        {
-            return false;
-        }
-
-        _baselineIconPositions = currentPositions;
-        _baselineSlotPositions = currentPositions
-            .OrderBy(x => x.Key)
-            .Take(200)
-            .Select((kvp, slot) => new KeyValuePair<int, Point>(slot, kvp.Value))
-            .ToDictionary(x => x.Key, x => x.Value);
-
-        return true;
+        return slots;
     }
 
-    public bool RestoreBaselineLayout()
+    private IEnumerable<int> ComputeAffectedIndices(int iconCount, int currentPage, int iconsPerPage)
     {
-        if (_baselineIconPositions is null)
+        var hasPreviousState =
+            _lastAppliedPage.HasValue &&
+            _lastIconsPerPage.HasValue &&
+            _lastIconCount.HasValue &&
+            _lastIconCount.Value == iconCount &&
+            _lastIconsPerPage.Value == iconsPerPage;
+
+        if (!hasPreviousState)
         {
-            return false;
+            return Enumerable.Range(0, iconCount);
         }
 
-        var success = true;
-        foreach (var (iconIndex, position) in _baselineIconPositions)
-        {
-            success &= NativeDesktopApi.TrySetDesktopIconPosition(iconIndex, position);
-        }
+        var previousRange = GetPageRange(_lastAppliedPage!.Value, iconsPerPage, iconCount);
+        var currentRange = GetPageRange(currentPage, iconsPerPage, iconCount);
+        return previousRange.Concat(currentRange).Distinct();
+    }
 
-        return success;
+    private static IEnumerable<int> GetPageRange(int page, int iconsPerPage, int iconCount)
+    {
+        var start = Math.Max(0, (page - 1) * iconsPerPage);
+        var endExclusive = Math.Min(iconCount, start + iconsPerPage);
+        return Enumerable.Range(start, Math.Max(0, endExclusive - start));
     }
 }
