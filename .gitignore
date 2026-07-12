@@ -1,0 +1,28 @@
+﻿# Build artifacts
+bin/
+obj/
+out/
+artifacts/
+*.exe
+*.dll
+*.pdb
+*.zip
+*.nupkg
+*.snupkg
+*.tmp
+*.temp
+*.log
+*.cache
+
+# IDE
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
