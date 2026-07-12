@@ -4,8 +4,9 @@ namespace DesktopPager.Tray;
 
 public sealed class GlobalHotkeyManager : IDisposable
 {
-    private const int ModAlt = 0x0001;
     private const int ModControl = 0x0002;
+    private const int ModShift = 0x0004;
+    private const int ModNoRepeat = 0x4000;
     private const int WmHotkey = 0x0312;
 
     private const int HotkeyNextPage = 1;
@@ -17,7 +18,7 @@ public sealed class GlobalHotkeyManager : IDisposable
     public bool Register(IntPtr windowHandle)
     {
         _windowHandle = windowHandle;
-        var modifiers = ModControl | ModAlt;
+        var modifiers = ModControl | ModShift | ModNoRepeat;
 
         var nextOk = NativeDesktopApi.RegisterHotKey(_windowHandle, HotkeyNextPage, modifiers, (int)Keys.PageUp);
         var previousOk = NativeDesktopApi.RegisterHotKey(_windowHandle, HotkeyPreviousPage, modifiers, (int)Keys.PageDown);

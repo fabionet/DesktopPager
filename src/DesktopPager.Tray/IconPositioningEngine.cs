@@ -49,11 +49,13 @@ public static class IconPositioningEngine
             if (onCurrentPage)
             {
                 var slotIndex = iconIndex - pageStartIndex;
-                result[iconIndex] = ResolveVisiblePosition(slotIndex, area, spacingX, spacingY, baselineSlotPositions);
+                var visible = ResolveVisiblePosition(slotIndex, area, spacingX, spacingY, baselineSlotPositions);
+                result[iconIndex] = ClampToSafeCoordinateRange(visible);
             }
             else
             {
-                result[iconIndex] = new Point(hiddenBaseX + (iconIndex * 4), hiddenY);
+                var hidden = new Point(hiddenBaseX + (iconIndex * 4), hiddenY);
+                result[iconIndex] = ClampToSafeCoordinateRange(hidden);
             }
         }
 
@@ -76,5 +78,14 @@ public static class IconPositioningEngine
         var col = slotIndex % maxColumns;
         var row = slotIndex / maxColumns;
         return new Point(area.Left + 8 + (col * spacingX), area.Top + 8 + (row * spacingY));
+    }
+
+    private static Point ClampToSafeCoordinateRange(Point position)
+    {
+        const int min = -32760;
+        const int max = 32760;
+        var x = Math.Clamp(position.X, min, max);
+        var y = Math.Clamp(position.Y, min, max);
+        return new Point(x, y);
     }
 }

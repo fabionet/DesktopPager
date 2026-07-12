@@ -8,6 +8,8 @@ public static class NativeDesktopApi
     private const int LvmFirst = 0x1000;
     private const int LvmGetItemCount = LvmFirst + 4;
     private const int LvmSetItemPosition32 = LvmFirst + 49;
+    private const uint SmtoAbortIfHung = 0x0002;
+    private const uint SendMessageTimeoutMs = 100;
 
     public static int GetDesktopIconCount()
     {
@@ -45,7 +47,15 @@ public static class NativeDesktopApi
         }
 
         var lp = MakeLParam(position.X, position.Y);
-        return SendMessage(listView, LvmSetItemPosition32, (IntPtr)iconIndex, lp) != IntPtr.Zero;
+        var sent = SendMessageTimeout(
+            listView,
+            LvmSetItemPosition32,
+            (IntPtr)iconIndex,
+            lp,
+            SmtoAbortIfHung,
+            SendMessageTimeoutMs,
+            out var result);
+        return sent != IntPtr.Zero && result != IntPtr.Zero;
     }
 
     public static bool RegisterHotKey(IntPtr handle, int id, int modifiers, int key)
@@ -107,6 +117,15 @@ public static class NativeDesktopApi
 
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(
+        IntPtr hWnd,
+        int Msg,
+        IntPtr wParam,
+        IntPtr lParam,
+        uint fuFlags,
+        uint uTimeout,
+        out IntPtr lpdwResult);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool GetClientRect(IntPtr hWnd, out Rect lpRect);

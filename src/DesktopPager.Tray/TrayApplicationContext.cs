@@ -8,6 +8,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly NotifyIcon _notifyIcon;
     private readonly DesktopPageManager _pageManager;
     private readonly GlobalHotkeyManager _hotkeyManager;
+    private readonly AutostartService _autostartService;
     private readonly HotkeyWindow _window;
 
     public TrayApplicationContext()
@@ -16,16 +17,38 @@ public sealed class TrayApplicationContext : ApplicationContext
         _pageManager = new DesktopPageManager(maxPages: 10, iconsPerPage: 100, pagerService);
         _pageManager.RefreshState();
         _pageManager.EnsureBaselineLayout();
+        _autostartService = new AutostartService();
 
         _hotkeyManager = new GlobalHotkeyManager();
         _window = new HotkeyWindow(_hotkeyManager, _pageManager, UpdateTooltip);
-        _hotkeyManager.Register(_window.Handle);
+        var hotkeysRegistered = _hotkeyManager.Register(_window.Handle);
 
         var trayMenu = new ContextMenuStrip();
-        trayMenu.Items.Add("Pagina successiva (Ctrl+Alt+PgUp)", null, (_, _) => ChangePage(_pageManager.NextPage));
-        trayMenu.Items.Add("Pagina precedente (Ctrl+Alt+PgDn)", null, (_, _) => ChangePage(_pageManager.PreviousPage));
-        trayMenu.Items.Add("Pagina principale (Ctrl+Alt+Fine)", null, (_, _) => ChangePage(_pageManager.GoToMainPage));
+        trayMenu.Items.Add("Pagina successiva (Ctrl+Shift+PgUp)", null, (_, _) => ChangePage(_pageManager.NextPage));
+        trayMenu.Items.Add("Pagina precedente (Ctrl+Shift+PgDn)", null, (_, _) => ChangePage(_pageManager.PreviousPage));
+        trayMenu.Items.Add("Pagina principale (Ctrl+Shift+Fine)", null, (_, _) => ChangePage(_pageManager.GoToMainPage));
         trayMenu.Items.Add("Ripristina layout iniziale", null, (_, _) => _pageManager.RestoreBaselineLayout());
+        var autostartItem = new ToolStripMenuItem("Avvio automatico con Windows")
+        {
+            Checked = _autostartService.IsEnabled()
+        };
+        autostartItem.Click += (_, _) =>
+        {
+            var targetEnabled = !autostartItem.Checked;
+            if (_autostartService.SetEnabled(targetEnabled))
+            {
+                autostartItem.Checked = targetEnabled;
+            }
+            else
+            {
+                MessageBox.Show(
+                    "Impossibile aggiornare l'impostazione di avvio automatico.",
+                    "DesktopPager",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
+        };
+        trayMenu.Items.Add(autostartItem);
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add("Esci", null, (_, _) => ExitThread());
 
@@ -37,6 +60,14 @@ public sealed class TrayApplicationContext : ApplicationContext
             ContextMenuStrip = trayMenu
         };
         UpdateTooltip();
+        if (!hotkeysRegistered)
+        {
+            _notifyIcon.ShowBalloonTip(
+                5000,
+                "DesktopPager",
+                "Impossibile registrare una o più hotkey globali. Verifica conflitti con altre applicazioni.",
+                ToolTipIcon.Warning);
+        }
     }
 
     protected override void ExitThreadCore()

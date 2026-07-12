@@ -18,3 +18,11 @@ Flusso consigliato per lavorare sul repository abionet/DesktopPager.
 - Usa prefissi branch: eature/, ix/, chore/.
 - Esegui sempre test/build prima della PR.
 - Mantieni main stabile e rilasciabile.
+
+## Versione C++ nativa (Win32)
+La conversione C++ e in src/DesktopPager.NativeCpp.
+Build (Visual Studio generator):
+cmake -S . -B build-cpp -G  Visual Studio 17 2022 -A x64
+cmake --build build-cpp --config Release
+Eseguibile: build-cpp\src\DesktopPager.NativeCpp\Release\DesktopPagerNative.exe
+Hotkey: Ctrl+Shift+PgUp, Ctrl+Shift+PgDn, Ctrl+Shift+Fine.

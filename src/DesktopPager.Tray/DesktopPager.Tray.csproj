@@ -5,5 +5,11 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <ApplicationIcon>Assets\DesktopPager.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <None Update="Assets\DesktopPager.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>
