@@ -26,6 +26,23 @@ Rotazione dello schermo (come le hotkey dei driver Intel):
 - `Ctrl+Alt+Destra` — ruota con la barra sul lato destro (270°)
 - `Ctrl+Alt+Shift+^` — emergenza: riporta tutto come prima
 
+## Barra a scomparsa (v0.4, solo versione .NET)
+All'avvio compare una barra stile Windows, di default in alto ridotta a una
+linguetta centrale color accento che si espande al passaggio del mouse. I
+pulsanti freccia alle estremita' la agganciano al lato sinistro o destro
+(anch'essi a scomparsa) o di nuovo in alto. I colori seguono il tema chiaro/
+scuro di Windows e il colore accento DWM. La barra ospita:
+- **avvii rapidi**: trascina file/programmi sulla barra o usa il pulsante ＋;
+  clic per avviare, clic destro per rimuovere. I collegamenti vivono in
+  `%AppData%\DesktopPager\QuickLaunch`.
+- **terminali a tendina** PowerShell (PS) e CMD (>_): scendono fino a meta'
+  schermo con la vera console incorporata e restano fissi finche' non si
+  chiudono con la X.
+- **vista 3D (3D)**: cover flow delle anteprime dei file di una cartella,
+  in GDI+ puro (nessuna GPU: adatta a macchine datate). Frecce/rotella/clic
+  laterali per scorrere, Invio o doppio clic per aprire, Esc per chiudere.
+- **Esplora file** e orologio, come la barra di Windows.
+
 ## Istruzioni Git del progetto
 Flusso consigliato per lavorare sul repository abionet/DesktopPager.
 
