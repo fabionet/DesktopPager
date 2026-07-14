@@ -31,6 +31,8 @@ public sealed class BarForm : Form
     private readonly System.Windows.Forms.Timer _clockTick = new() { Interval = 10_000 };
     private readonly TerminalPanel _terminal = new();
 
+    private const int StartSize = 44;
+
     private readonly Button _moveA = MakeButton("◀");
     private readonly Button _moveB = MakeButton("▶");
     private readonly Button _add = MakeButton("＋");
@@ -39,6 +41,12 @@ public sealed class BarForm : Form
     private readonly Button _flow = MakeButton("3D");
     private readonly Button _game = MakeButton("🎮");
     private readonly Button _explorer = MakeButton("📁");
+    private readonly PictureBox _start = new()
+    {
+        Size = new Size(StartSize, StartSize),
+        SizeMode = PictureBoxSizeMode.Zoom,
+        Cursor = Cursors.Hand
+    };
     private readonly Label _clock = new()
     {
         AutoSize = false,
@@ -68,7 +76,10 @@ public sealed class BarForm : Form
         _game.Click += (_, _) => OpenShop3D();
         _explorer.Click += (_, _) => Launch(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"));
+        _start.Image = MakeWindowsCoin(StartSize * 2);
+        _start.Click += (_, _) => ShowStartMenu();
 
+        _tips.SetToolTip(_start, "Menu di sistema");
         _tips.SetToolTip(_moveA, "Sposta la barra");
         _tips.SetToolTip(_moveB, "Sposta la barra");
         _tips.SetToolTip(_add, "Aggiungi collegamento");
@@ -78,7 +89,7 @@ public sealed class BarForm : Form
         _tips.SetToolTip(_game, "Vista 3D Game (esplora dischi e cartelle in prima persona)");
         _tips.SetToolTip(_explorer, "Esplora file");
 
-        Controls.AddRange(new Control[] { _moveA, _moveB, _add, _ps, _cmd, _flow, _game, _explorer, _clock });
+        Controls.AddRange(new Control[] { _start, _moveA, _moveB, _add, _ps, _cmd, _flow, _game, _explorer, _clock });
 
         _watch.Tick += (_, _) => CollapseIfIdle();
         _clockTick.Tick += (_, _) => _clock.Text = DateTime.Now.ToString("HH:mm");
@@ -188,6 +199,7 @@ public sealed class BarForm : Form
                 b.FlatAppearance.MouseOverBackColor = hover;
             }
         }
+        _start.BackColor = BackColor; // angoli trasparenti della moneta si fondono col fondo
     }
 
     // --- layout ----------------------------------------------------------
@@ -214,6 +226,8 @@ public sealed class BarForm : Form
                 tail[i].Location = new Point(xr, (Thickness - tail[i].Height) / 2);
                 xr -= pad;
             }
+            // moneta Windows al centro della barra
+            _start.Location = new Point((Width - _start.Width) / 2, (Thickness - _start.Height) / 2);
         }
         else
         {
@@ -227,6 +241,7 @@ public sealed class BarForm : Form
                 tail[i].Location = new Point((Thickness - tail[i].Width) / 2, yb);
                 yb -= pad;
             }
+            _start.Location = new Point((Thickness - _start.Width) / 2, (Height - _start.Height) / 2);
         }
     }
 
@@ -451,6 +466,135 @@ public sealed class BarForm : Form
         try
         {
             Process.Start(new ProcessStartInfo { FileName = file, UseShellExecute = true });
+        }
+        catch
+        {
+            // avvio fallito: ignora
+        }
+    }
+
+    // --- moneta Windows e menu di sistema ---------------------------------
+
+    private static Bitmap MakeWindowsCoin(int size)
+    {
+        var bmp = new Bitmap(size, size);
+        using var g = Graphics.FromImage(bmp);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.Clear(Color.Transparent);
+
+        var rect = new Rectangle(1, 1, size - 2, size - 2);
+
+        // corpo della moneta con gradiente radiale (rilievo tondeggiante)
+        using (var path = new GraphicsPath())
+        {
+            path.AddEllipse(rect);
+            using var pgb = new PathGradientBrush(path)
+            {
+                CenterPoint = new PointF(size * 0.38f, size * 0.34f),
+                CenterColor = Color.FromArgb(255, 250, 250, 252),
+                SurroundColors = new[] { Color.FromArgb(255, 148, 156, 168) }
+            };
+            g.FillEllipse(pgb, rect);
+        }
+        using (var pen = new Pen(Color.FromArgb(255, 88, 94, 106), Math.Max(1f, size / 32f)))
+        {
+            g.DrawEllipse(pen, rect);
+        }
+
+        // logo Windows a 4 colori (stile Windows 7)
+        var s = size * 0.17f;
+        var gap = size * 0.05f;
+        var cx = size / 2f;
+        var cy = size / 2f;
+        Color[] cols =
+        {
+            Color.FromArgb(0xE6, 0x3B, 0x2E), Color.FromArgb(0x6F, 0xBF, 0x2E),
+            Color.FromArgb(0x00, 0x9D, 0xE0), Color.FromArgb(0xF7, 0xB6, 0x00)
+        };
+        (float x, float y)[] pos =
+        {
+            (cx - s - gap / 2, cy - s - gap / 2), (cx + gap / 2, cy - s - gap / 2),
+            (cx - s - gap / 2, cy + gap / 2), (cx + gap / 2, cy + gap / 2)
+        };
+        for (var i = 0; i < 4; i++)
+        {
+            using var b = new SolidBrush(cols[i]);
+            g.FillRectangle(b, pos[i].x, pos[i].y, s, s);
+        }
+        return bmp;
+    }
+
+    private void ShowStartMenu()
+    {
+        var sys = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        var win = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        string Sys(string f) => Path.Combine(sys, f);
+        var powershell = Path.Combine(sys, "WindowsPowerShell", "v1.0", "powershell.exe");
+
+        var menu = new ContextMenuStrip();
+
+        // Programmi di sistema
+        var progs = new ToolStripMenuItem("Programmi di sistema");
+        progs.DropDownItems.Add("Esplora file", null, (_, _) => Launch(Path.Combine(win, "explorer.exe")));
+        progs.DropDownItems.Add("Prompt dei comandi", null, (_, _) => Launch(Sys("cmd.exe")));
+        progs.DropDownItems.Add("Windows PowerShell", null, (_, _) => Launch(powershell));
+        progs.DropDownItems.Add("Blocco note", null, (_, _) => Launch(Sys("notepad.exe")));
+        progs.DropDownItems.Add("Calcolatrice", null, (_, _) => Launch(Sys("calc.exe")));
+        progs.DropDownItems.Add("Paint", null, (_, _) => Launch(Sys("mspaint.exe")));
+        progs.DropDownItems.Add("Mappa caratteri", null, (_, _) => Launch(Sys("charmap.exe")));
+        progs.DropDownItems.Add("Editor del Registro", null, (_, _) => Launch(Path.Combine(win, "regedit.exe")));
+        progs.DropDownItems.Add("Informazioni di sistema", null, (_, _) => Launch(Sys("msinfo32.exe")));
+        progs.DropDownItems.Add("Configurazione di sistema", null, (_, _) => Launch(Sys("msconfig.exe")));
+
+        // Strumenti di amministrazione
+        var admin = new ToolStripMenuItem("Strumenti di amministrazione");
+        admin.DropDownItems.Add("Gestione computer", null, (_, _) => Launch(Sys("compmgmt.msc")));
+        admin.DropDownItems.Add("Gestione dispositivi", null, (_, _) => Launch(Sys("devmgmt.msc")));
+        admin.DropDownItems.Add("Gestione disco", null, (_, _) => Launch(Sys("diskmgmt.msc")));
+        admin.DropDownItems.Add("Servizi", null, (_, _) => Launch(Sys("services.msc")));
+        admin.DropDownItems.Add("Visualizzatore eventi", null, (_, _) => Launch(Sys("eventvwr.msc")));
+        admin.DropDownItems.Add("Utilità di pianificazione", null, (_, _) => Launch(Sys("taskschd.msc")));
+        admin.DropDownItems.Add("Gestione attività", null, (_, _) => Launch(Sys("taskmgr.exe")));
+
+        // Impostazioni (Pannello di controllo vecchio stile)
+        var settings = new ToolStripMenuItem("Impostazioni (Pannello di controllo)");
+        settings.DropDownItems.Add("Pannello di controllo", null, (_, _) => Launch(Sys("control.exe")));
+        settings.DropDownItems.Add(new ToolStripSeparator());
+        void Cpl(string title, string cpl) =>
+            settings.DropDownItems.Add(title, null, (_, _) => LaunchControl(cpl));
+        Cpl("Programmi e funzionalità", "appwiz.cpl");
+        Cpl("Connessioni di rete", "ncpa.cpl");
+        Cpl("Opzioni risparmio energia", "powercfg.cpl");
+        Cpl("Schermo", "desk.cpl");
+        Cpl("Audio", "mmsys.cpl");
+        Cpl("Data e ora", "timedate.cpl");
+        Cpl("Mouse", "main.cpl");
+        Cpl("Sistema", "sysdm.cpl");
+        Cpl("Windows Defender Firewall", "firewall.cpl");
+        Cpl("Paese e lingua", "intl.cpl");
+        settings.DropDownItems.Add("Account utente", null, (_, _) => Launch(Sys("netplwiz.exe")));
+
+        menu.Items.Add(progs);
+        menu.Items.Add(admin);
+        menu.Items.Add(settings);
+
+        _pinned++;
+        menu.Closed += (_, _) => _pinned--;
+        // attiva la barra (tool-window) così il menu resta aperto, e àncoralo alla moneta
+        SetForegroundWindow(Handle);
+        Activate();
+        menu.Show(_start, new Point(_start.Width / 2, _start.Height));
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    private static void LaunchControl(string cpl)
+    {
+        try
+        {
+            var control = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "control.exe");
+            Process.Start(new ProcessStartInfo { FileName = control, Arguments = cpl, UseShellExecute = true });
         }
         catch
         {
