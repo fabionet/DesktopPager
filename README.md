@@ -41,11 +41,21 @@ Resta residente in memoria con un'icona nell'area di notifica.
   Windows → vista dall'alto → atterraggio). Movimento frecce/WASD, Invio o clic per
   entrare/aprire, Backspace per risalire, Esc per uscire.
 
+**Effetti desktop 3D** (opzionali, di default spenti)
+- 🧊 **Cubo del desktop**: tieni **Ctrl + tasto destro** e trascina sul desktop per
+  far ruotare le pagine delle icone come le facce di un cubo 3D; al rilascio scatta
+  alla faccia più vicina e cambia pagina.
+- 🫧 **Finestre "gelatina"** (stile Compiz): spostando una finestra questa ondeggia
+  in modo elastico. Il contenuto è un fermo-immagine durante il movimento e torna
+  vivo al rilascio (limite tecnico di un'app non-compositor).
+- Si attivano dal menu tasto-destro della barra o dal menu della tray, alla voce
+  **"Effetti desktop 3D"**; lo stato viene ricordato tra un avvio e l'altro.
+
 ---
 
 ## Installazione (utente finale)
 
-1. Scarica `DesktopPager3D-OS-1.0.0-Setup.msi` dalla pagina
+1. Scarica `DesktopPager3D-OS-1.1.0-Setup.msi` dalla pagina
    [Releases](https://github.com/fabionet/DesktopPager3D-OS/releases).
 2. Doppio clic sull'MSI e segui la procedura guidata (richiede i privilegi di
    amministratore perché installa in `C:\Program Files\DesktopPager3D-OS`).
