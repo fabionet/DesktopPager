@@ -44,6 +44,12 @@ scuro di Windows e il colore accento DWM. La barra ospita:
   fallback software; se WPF non e' disponibile ripiega sulla resa GDI+ senza
   GPU per macchine molto datate. Frecce/rotella/clic laterali per scorrere,
   Invio o doppio clic per aprire, Esc per chiudere.
+- **Vista 3D Game (🎮)**: esplorazione in prima persona di dischi e cartelle
+  come dentro un negozio. All'ingresso ("Questo PC") ci sono i banchi per
+  dischi e cartelle speciali; entrando in uno si cammina in una stanza con i
+  suoi file e sottocartelle su piedistalli. Muoviti con frecce/WASD (avanti/
+  indietro e gira), Invio o clic per entrare in una cartella o aprire un file,
+  Backspace per tornare indietro, Esc per uscire. 3D WPF accelerato dalla GPU.
 - **Esplora file** e orologio, come la barra di Windows.
 
 ## Istruzioni Git del progetto
