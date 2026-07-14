@@ -268,7 +268,12 @@ public sealed class StartMenuForm : Form
         try
         {
             using var ic = Icon.FromHandle(sfi.hIcon);
-            return new Bitmap(ic.ToBitmap(), 16, 16);
+            using var src = ic.ToBitmap();
+            var bmp = new Bitmap(16, 16, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using var g = Graphics.FromImage(bmp);
+            g.Clear(Color.Transparent);
+            g.DrawImage(src, new Rectangle(0, 0, 16, 16)); // preserva l'alfa: niente quadratino
+            return bmp;
         }
         catch
         {
@@ -412,7 +417,11 @@ public sealed class StartMenuForm : Form
             try
             {
                 using var ic = Icon.FromHandle(sfi.hIcon);
-                var bmp = new Bitmap(ic.ToBitmap(), 16, 16);
+                using var src = ic.ToBitmap();
+                var bmp = new Bitmap(16, 16, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                using var g = Graphics.FromImage(bmp);
+                g.Clear(Color.Transparent);
+                g.DrawImage(src, new Rectangle(0, 0, 16, 16));
                 return bmp;
             }
             finally
@@ -426,12 +435,15 @@ public sealed class StartMenuForm : Form
 
     private static Bitmap GenericAppIcon() => GenericAppIcon(Color.FromArgb(120, 130, 150));
 
+    // segnaposto tondeggiante (niente quadrato netto)
     private static Bitmap GenericAppIcon(Color c)
     {
-        var bmp = new Bitmap(16, 16);
+        var bmp = new Bitmap(16, 16, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(bmp);
+        g.Clear(Color.Transparent);
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         using var b = new SolidBrush(c);
-        g.FillRectangle(b, 2, 2, 12, 12);
+        g.FillEllipse(b, 2, 2, 12, 12);
         return bmp;
     }
 

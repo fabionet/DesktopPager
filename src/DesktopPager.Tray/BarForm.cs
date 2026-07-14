@@ -44,16 +44,16 @@ public sealed class BarForm : Form
 
     private const int StartSize = 44;
 
-    private readonly Button _moveA = MakeButton("◀");
-    private readonly Button _moveB = MakeButton("▶");
-    private readonly Button _add = MakeButton("＋");
-    private readonly Button _ps = MakeButton("PS");
-    private readonly Button _cmd = MakeButton(">_");
-    private readonly Button _flow = MakeButton("3D");
-    private readonly Button _game = MakeButton("🎮");
-    private readonly Button _explorer = MakeButton("📁");
-    private readonly Button _apps = MakeButton("☰");
-    private readonly Button _power = MakeButton("⏻");
+    private readonly FlatIconButton _moveA = MakeButton("◀");
+    private readonly FlatIconButton _moveB = MakeButton("▶");
+    private readonly FlatIconButton _add = MakeButton("＋");
+    private readonly FlatIconButton _ps = MakeButton("PS");
+    private readonly FlatIconButton _cmd = MakeButton(">_");
+    private readonly FlatIconButton _flow = MakeButton("3D");
+    private readonly FlatIconButton _game = MakeButton("🎮");
+    private readonly FlatIconButton _explorer = MakeButton("📁");
+    private readonly FlatIconButton _apps = MakeButton("☰");
+    private readonly FlatIconButton _power = MakeButton("⏻");
     private readonly PictureBox _start = new()
     {
         Size = new Size(StartSize, StartSize),
@@ -183,19 +183,17 @@ public sealed class BarForm : Form
     private static string QuickLaunchFolder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DesktopPager3D-OS", "QuickLaunch");
 
-    private static Button MakeButton(string text)
+    private static FlatIconButton MakeButton(string text)
     {
-        var b = new Button
+        return new FlatIconButton
         {
             Text = text,
-            FlatStyle = FlatStyle.Flat,
             Size = new Size(ButtonSize, ButtonSize),
             Font = new Font("Segoe UI", 10f, FontStyle.Bold),
-            TabStop = false,
+            ForeColor = BarStyle.Text,
+            HoverColor = BarStyle.Hover,
             Margin = Padding.Empty
         };
-        b.FlatAppearance.BorderSize = 0;
-        return b;
     }
 
     // --- espansione / linguetta -----------------------------------------
@@ -259,10 +257,9 @@ public sealed class BarForm : Form
         foreach (Control c in Controls)
         {
             c.ForeColor = BarText;
-            if (c is Button b)
+            if (c is FlatIconButton fb)
             {
-                b.BackColor = BarMid;
-                b.FlatAppearance.MouseOverBackColor = BarHover;
+                fb.HoverColor = BarHover; // trasparente: nessuna tessera quadrata
             }
             else
             {
@@ -423,12 +420,11 @@ public sealed class BarForm : Form
 
         foreach (var file in Directory.EnumerateFiles(QuickLaunchFolder).OrderBy(f => f).Take(24))
         {
-            var pb = new PictureBox
+            var pb = new FlatIconButton
             {
                 Size = new Size(ButtonSize, ButtonSize),
-                SizeMode = PictureBoxSizeMode.CenterImage,
-                Cursor = Cursors.Hand,
                 Tag = file,
+                HoverColor = BarStyle.Hover,
                 Visible = _expanded
             };
             try
@@ -439,7 +435,7 @@ public sealed class BarForm : Form
                 using var icon = Icon.ExtractAssociatedIcon(iconSource);
                 if (icon is not null)
                 {
-                    pb.Image = new Bitmap(icon.ToBitmap(), new Size(28, 28));
+                    pb.Image = IconToTransparentBitmap(icon, 28);
                 }
             }
             catch
@@ -453,9 +449,22 @@ public sealed class BarForm : Form
         }
     }
 
+    // converte un'icona in bitmap con sfondo trasparente (niente quadratino nero):
+    // ToBitmap() conserva l'alfa, DrawImage (GDI+) la preserva nel ridimensionare
+    private static Bitmap IconToTransparentBitmap(Icon icon, int size)
+    {
+        using var src = icon.ToBitmap();
+        var bmp = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using var g = Graphics.FromImage(bmp);
+        g.Clear(Color.Transparent);
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.DrawImage(src, new Rectangle(0, 0, size, size));
+        return bmp;
+    }
+
     private void OnQuickItemClick(object? sender, MouseEventArgs e)
     {
-        if (sender is not PictureBox pb || pb.Tag is not string file)
+        if (sender is not FlatIconButton pb || pb.Tag is not string file)
         {
             return;
         }
@@ -799,7 +808,7 @@ public sealed class BarForm : Form
                 using var icon = Icon.ExtractAssociatedIcon(path);
                 if (icon is not null)
                 {
-                    return new Bitmap(icon.ToBitmap(), new Size(16, 16));
+                    return IconToTransparentBitmap(icon, 16);
                 }
             }
         }
