@@ -23,14 +23,14 @@ public sealed class BarForm : Form
     private const int TabThickness = 9;
     private const int ButtonSize = 38;
 
-    // palette rosso scuro con effetto in rilievo
-    private static readonly Color BarTop = Color.FromArgb(124, 26, 26);
-    private static readonly Color BarBottom = Color.FromArgb(58, 8, 8);
-    private static readonly Color BarMid = Color.FromArgb(98, 18, 18);
-    private static readonly Color BarHover = Color.FromArgb(152, 42, 42);
-    private static readonly Color BarHi = Color.FromArgb(188, 78, 78);
-    private static readonly Color BarShadow = Color.FromArgb(22, 2, 2);
-    private static readonly Color BarText = Color.White;
+    // palette rosso scuro in rilievo (condivisa con il menu Start)
+    private static readonly Color BarTop = BarStyle.Top;
+    private static readonly Color BarBottom = BarStyle.Bottom;
+    private static readonly Color BarMid = BarStyle.Mid;
+    private static readonly Color BarHover = BarStyle.Hover;
+    private static readonly Color BarHi = BarStyle.Highlight;
+    private static readonly Color BarShadow = BarStyle.Shadow;
+    private static readonly Color BarText = BarStyle.Text;
 
     private Side _side = Side.Top;
     private bool _expanded;
@@ -52,6 +52,8 @@ public sealed class BarForm : Form
     private readonly Button _flow = MakeButton("3D");
     private readonly Button _game = MakeButton("🎮");
     private readonly Button _explorer = MakeButton("📁");
+    private readonly Button _apps = MakeButton("☰");
+    private readonly Button _power = MakeButton("⏻");
     private readonly PictureBox _start = new()
     {
         Size = new Size(StartSize, StartSize),
@@ -87,9 +89,19 @@ public sealed class BarForm : Form
         _game.Click += (_, _) => OpenShop3D();
         _explorer.Click += (_, _) => Launch(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"));
+        _apps.Click += (_, _) => ShowOpenProgramsMenu();
+        _power.Click += (_, _) => ShowPowerMenu();
         _start.Image = MakeWindowsCoin(StartSize * 2);
         _start.Click += (_, _) => ShowStartMenu();
 
+        // icone nitide dal font di sistema (Segoe MDL2 Assets)
+        _apps.Font = new Font("Segoe MDL2 Assets", 12f);
+        _apps.Text = "";   // AllApps (programmi aperti)
+        _power.Font = new Font("Segoe MDL2 Assets", 12f);
+        _power.Text = "";  // PowerButton
+
+        _tips.SetToolTip(_apps, "Programmi aperti");
+        _tips.SetToolTip(_power, "Spegni / Riavvia / Sospendi / Blocca");
         _tips.SetToolTip(_start, "Menu di sistema");
         _tips.SetToolTip(_moveA, "Sposta la barra");
         _tips.SetToolTip(_moveB, "Sposta la barra");
@@ -100,7 +112,7 @@ public sealed class BarForm : Form
         _tips.SetToolTip(_game, "Vista 3D Game (esplora dischi e cartelle in prima persona)");
         _tips.SetToolTip(_explorer, "Esplora file");
 
-        Controls.AddRange(new Control[] { _start, _moveA, _moveB, _add, _ps, _cmd, _flow, _game, _explorer, _clock });
+        Controls.AddRange(new Control[] { _start, _moveA, _moveB, _add, _ps, _cmd, _flow, _game, _explorer, _apps, _power, _clock });
 
         _watch.Tick += (_, _) => CollapseIfIdle();
         _clockTick.Tick += (_, _) => _clock.Text = DateTime.Now.ToString("HH:mm");
@@ -268,7 +280,7 @@ public sealed class BarForm : Form
         UpdateMoveGlyphs();
 
         var head = new List<Control> { _moveA };
-        var tail = new List<Control> { _explorer, _ps, _cmd, _flow, _game, _clock, _moveB };
+        var tail = new List<Control> { _explorer, _ps, _cmd, _flow, _game, _apps, _power, _clock, _moveB };
         var middle = new List<Control>(_quickItems) { _add };
 
         var pad = 5;
@@ -695,6 +707,220 @@ public sealed class BarForm : Form
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    // --- programmi aperti --------------------------------------------------
+
+    private void ShowOpenProgramsMenu()
+    {
+        var m = new ContextMenuStrip();
+        var wins = EnumOpenWindows();
+        if (wins.Count == 0)
+        {
+            var none = m.Items.Add("(nessun programma aperto)");
+            none.Enabled = false;
+        }
+        else
+        {
+            foreach (var (hwnd, title) in wins)
+            {
+                var t = title.Length > 60 ? title[..60] + "…" : title;
+                var h = hwnd;
+                var item = m.Items.Add(t);
+                try
+                {
+                    item.Image = WindowIcon(h);
+                }
+                catch
+                {
+                    // niente icona
+                }
+                item.Click += (_, _) => ActivateWindow(h);
+            }
+        }
+
+        _pinned++;
+        m.Closed += (_, _) => _pinned--;
+        SetForegroundWindow(Handle);
+        Activate();
+        m.Show(Cursor.Position);
+    }
+
+    private List<(IntPtr hwnd, string title)> EnumOpenWindows()
+    {
+        var list = new List<(IntPtr, string)>();
+        var self = Handle;
+        EnumWindows((h, _) =>
+        {
+            if (h == self || !IsWindowVisible(h))
+            {
+                return true;
+            }
+
+            if (GetWindow(h, GW_OWNER) != IntPtr.Zero)
+            {
+                return true; // finestra di proprietà (dialogo): salta
+            }
+
+            var ex = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();
+            if ((ex & WS_EX_TOOLWINDOW) != 0)
+            {
+                return true; // tool window: non è un'app
+            }
+
+            var len = GetWindowTextLength(h);
+            if (len == 0)
+            {
+                return true;
+            }
+
+            var sb = new System.Text.StringBuilder(len + 1);
+            GetWindowText(h, sb, sb.Capacity);
+            var title = sb.ToString();
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                list.Add((h, title));
+            }
+
+            return true;
+        }, IntPtr.Zero);
+
+        return list.OrderBy(w => w.Item2, StringComparer.CurrentCultureIgnoreCase).ToList();
+    }
+
+    private static Bitmap? WindowIcon(IntPtr hwnd)
+    {
+        GetWindowThreadProcessId(hwnd, out var pid);
+        try
+        {
+            using var p = System.Diagnostics.Process.GetProcessById((int)pid);
+            var path = p.MainModule?.FileName;
+            if (!string.IsNullOrEmpty(path))
+            {
+                using var icon = Icon.ExtractAssociatedIcon(path);
+                if (icon is not null)
+                {
+                    return new Bitmap(icon.ToBitmap(), new Size(16, 16));
+                }
+            }
+        }
+        catch
+        {
+            // accesso al processo negato: niente icona
+        }
+
+        return null;
+    }
+
+    private static void ActivateWindow(IntPtr hwnd)
+    {
+        if (IsIconic(hwnd))
+        {
+            ShowWindow(hwnd, 9); // SW_RESTORE
+        }
+
+        SetForegroundWindow(hwnd);
+    }
+
+    // --- spegnimento -------------------------------------------------------
+
+    private void ShowPowerMenu()
+    {
+        var m = new ContextMenuStrip();
+        m.Items.Add("Sospendi", null, (_, _) => Suspend());
+        m.Items.Add("Blocca", null, (_, _) => LockWorkStation());
+        m.Items.Add("Disconnetti", null, (_, _) =>
+        {
+            if (Confirm("Disconnettere l'utente? I programmi aperti verranno chiusi."))
+            {
+                RunShutdown("/l");
+            }
+        });
+        m.Items.Add(new ToolStripSeparator());
+        m.Items.Add("Riavvia", null, (_, _) =>
+        {
+            if (Confirm("Riavviare il computer?"))
+            {
+                RunShutdown("/r /t 0");
+            }
+        });
+        m.Items.Add("Arresta (spegni)", null, (_, _) =>
+        {
+            if (Confirm("Arrestare (spegnere) il computer?"))
+            {
+                RunShutdown("/s /t 0");
+            }
+        });
+
+        _pinned++;
+        m.Closed += (_, _) => _pinned--;
+        SetForegroundWindow(Handle);
+        Activate();
+        m.Show(Cursor.Position);
+    }
+
+    private static bool Confirm(string message) =>
+        MessageBox.Show(message, "DesktopPager3D-OS", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+
+    private static void RunShutdown(string args)
+    {
+        try
+        {
+            var exe = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "shutdown.exe");
+            Process.Start(new ProcessStartInfo { FileName = exe, Arguments = args, UseShellExecute = false, CreateNoWindow = true });
+        }
+        catch
+        {
+            // spegnimento fallito: ignora
+        }
+    }
+
+    private static void Suspend()
+    {
+        try
+        {
+            SetSuspendState(false, false, false); // sospensione (non ibernazione)
+        }
+        catch
+        {
+            // sospensione non disponibile
+        }
+    }
+
+    private const int GW_OWNER = 4;
+    private const int GWL_EXSTYLE = -20;
+    private const long WS_EX_TOOLWINDOW = 0x00000080;
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetWindow(IntPtr hWnd, int uCmd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern int GetWindowTextLength(IntPtr hWnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool LockWorkStation();
+
+    [System.Runtime.InteropServices.DllImport("powrprof.dll", SetLastError = true)]
+    private static extern bool SetSuspendState(bool hibernate, bool forceCritical, bool disableWakeEvent);
 
     private void OpenShop3D()
     {

@@ -27,21 +27,19 @@ public sealed class StartMenuForm : Form
         ShowInTaskbar = false;
         TopMost = true;
         Size = new Size(700, 600);
-        var back = ThemeService.BarBackground;
-        var fore = ThemeService.BarForeground;
-        BackColor = back;
-
-        // bordo sottile color accento
+        var back = BarStyle.Mid;
+        var fore = BarStyle.Text;
+        BackColor = BarStyle.Highlight; // fa da bordo sottile in rilievo
         Padding = new Padding(1);
-        var accent = ThemeService.Accent;
 
-        // intestazione
-        var header = new Panel { Dock = DockStyle.Top, Height = 44, BackColor = accent };
+        // intestazione in stile barra (gradiente rosso)
+        var header = new GradientPanel { Dock = DockStyle.Top, Height = 44 };
         var title = new Label
         {
             Text = "  DesktopPager3D-OS  •  " + Environment.UserName,
             Dock = DockStyle.Fill,
             ForeColor = Color.White,
+            BackColor = Color.Transparent,
             Font = new Font("Segoe UI", 11f, FontStyle.Bold),
             TextAlign = ContentAlignment.MiddleLeft
         };
@@ -54,7 +52,7 @@ public sealed class StartMenuForm : Form
             Width = 240,
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
-            BackColor = ThemeService.IsDarkTheme() ? ControlDark(back) : ControlLight(back),
+            BackColor = BarStyle.Dark,
             Padding = new Padding(10, 12, 10, 10)
         };
         AddPlaces(right, fore);
@@ -90,7 +88,7 @@ public sealed class StartMenuForm : Form
         var bottom = new Panel { Dock = DockStyle.Bottom, Height = 40, BackColor = back, Padding = new Padding(10, 6, 10, 8) };
         _search.Dock = DockStyle.Fill;
         _search.BorderStyle = BorderStyle.FixedSingle;
-        _search.BackColor = ThemeService.IsDarkTheme() ? ControlDark(back) : Color.White;
+        _search.BackColor = BarStyle.Dark;
         _search.ForeColor = fore;
         _search.Font = new Font("Segoe UI", 10f);
         _search.PlaceholderText = "Cerca programmi…";
@@ -121,9 +119,6 @@ public sealed class StartMenuForm : Form
             arm.Start();
         };
     }
-
-    private static Color ControlDark(Color c) => Color.FromArgb(c.R + 12, c.G + 12, c.B + 14);
-    private static Color ControlLight(Color c) => Color.FromArgb(Math.Max(0, c.R - 12), Math.Max(0, c.G - 12), Math.Max(0, c.B - 12));
 
     // --- colonna destra (collegamenti classici) ---------------------------
 
@@ -167,16 +162,35 @@ public sealed class StartMenuForm : Form
             Height = 30,
             FlatStyle = FlatStyle.Flat,
             ForeColor = fore,
-            BackColor = BackColor,
+            BackColor = BarStyle.Dark,
             TextAlign = ContentAlignment.MiddleLeft,
             Font = new Font("Segoe UI", 9.5f),
             Margin = new Padding(0, 1, 0, 1),
             TabStop = false
         };
         b.FlatAppearance.BorderSize = 0;
-        b.FlatAppearance.MouseOverBackColor = ThemeService.ButtonHover;
+        b.FlatAppearance.MouseOverBackColor = BarStyle.Hover;
         b.Click += (_, _) => { action(); Close(); };
         return b;
+    }
+
+    // pannello con gradiente rosso per l'intestazione (stile barra)
+    private sealed class GradientPanel : Panel
+    {
+        public GradientPanel() => DoubleBuffered = true;
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var r = ClientRectangle;
+            if (r.Width > 0 && r.Height > 0)
+            {
+                using var lg = new System.Drawing.Drawing2D.LinearGradientBrush(r, BarStyle.Top, BarStyle.Bottom, 90f);
+                e.Graphics.FillRectangle(lg, r);
+                using var hi = new Pen(BarStyle.Highlight, 1f);
+                e.Graphics.DrawLine(hi, 0, 0, r.Width, 0);
+            }
+            base.OnPaint(e);
+        }
     }
 
     // --- colonna sinistra (tutti i programmi) -----------------------------
