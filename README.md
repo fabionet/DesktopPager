@@ -155,3 +155,12 @@ Componenti di terze parti coinvolti:
 
 Le icone e le anteprime dei file mostrate nelle viste sono quelle del sistema
 operativo/dei relativi handler e restano di proprietà dei rispettivi titolari.
+
+### Marchi
+
+**Windows®**, il **logo Windows** (l'emblema a quattro colori) e **Segoe®** sono
+marchi registrati di **Microsoft Corporation**. Questo progetto è un'iniziativa
+**indipendente**, **non è affiliato, sponsorizzato né approvato da Microsoft**.
+I riferimenti a Windows e l'uso di elementi grafici in stile Windows hanno scopo
+puramente descrittivo/di interoperabilità con il sistema operativo. Tutti gli
+altri marchi citati appartengono ai rispettivi titolari.
