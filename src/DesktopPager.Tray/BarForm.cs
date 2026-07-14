@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Windows.Forms;
+using DesktopPager.Tray.DesktopEffects;
 
 namespace DesktopPager.Tray;
 
@@ -37,6 +38,9 @@ public sealed class BarForm : Form
     private bool _replaceTaskbar;   // sostituisce la barra di Windows
     private bool _alwaysVisible;    // non collassare (modalità sostituzione)
     private int _pinned; // > 0 se un dialogo/menu e' aperto: non collassare
+
+    /// <summary>Servizio effetti desktop 3D (cubo + gelatina); impostato dal contesto tray.</summary>
+    public DesktopEffectsService? Effects { get; set; }
 
     private readonly System.Windows.Forms.Timer _watch = new() { Interval = 300 };
     private readonly System.Windows.Forms.Timer _clockTick = new() { Interval = 10_000 };
@@ -185,6 +189,27 @@ public sealed class BarForm : Form
         m.Items.Add("Aggancia in alto", null, (_, _) => { if (_replaceTaskbar) SetReplaceTaskbar(false); _side = Side.Top; Expand(); });
         m.Items.Add("Aggancia a sinistra", null, (_, _) => { if (_replaceTaskbar) SetReplaceTaskbar(false); _side = Side.Left; Expand(); });
         m.Items.Add("Aggancia a destra", null, (_, _) => { if (_replaceTaskbar) SetReplaceTaskbar(false); _side = Side.Right; Expand(); });
+
+        if (Effects is not null)
+        {
+            m.Items.Add(new ToolStripSeparator());
+            var fx = new ToolStripMenuItem("Effetti desktop 3D");
+            var cube = new ToolStripMenuItem("Cubo del desktop (Ctrl+tasto destro trascina)")
+            {
+                Checked = Effects.CubeEnabled,
+                CheckOnClick = true
+            };
+            cube.Click += (_, _) => Effects.CubeEnabled = cube.Checked;
+            var wobble = new ToolStripMenuItem("Finestre gelatina (allo spostamento)")
+            {
+                Checked = Effects.WobbleEnabled,
+                CheckOnClick = true
+            };
+            wobble.Click += (_, _) => Effects.WobbleEnabled = wobble.Checked;
+            fx.DropDownItems.Add(cube);
+            fx.DropDownItems.Add(wobble);
+            m.Items.Add(fx);
+        }
 
         _pinned++;
         m.Closed += (_, _) => _pinned--;
