@@ -5,7 +5,7 @@ namespace DesktopPager.Tray;
 public sealed class AutostartService
 {
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string ValueName = "DesktopPager";
+    private const string ValueName = "DesktopPager3D-OS";
 
     public bool IsEnabled()
     {

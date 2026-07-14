@@ -54,7 +54,7 @@ public sealed class CoverFlow3DWindow : Window
 
     public CoverFlow3DWindow(string folder)
     {
-        Title = "DesktopPager - Vista 3D";
+        Title = "DesktopPager3D-OS - Vista 3D";
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         WindowState = WindowState.Maximized;

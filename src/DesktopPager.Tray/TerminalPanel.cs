@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Drawing;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -85,9 +86,14 @@ public sealed class TerminalPanel : Form
 
         try
         {
+            // percorso completo di sistema (evita rischi di search-order)
+            var sys = Environment.GetFolderPath(Environment.SpecialFolder.System);
+            var exe = kind == "cmd"
+                ? Path.Combine(sys, "cmd.exe")
+                : Path.Combine(sys, "WindowsPowerShell", "v1.0", "powershell.exe");
             _process = Process.Start(new ProcessStartInfo
             {
-                FileName = kind == "cmd" ? "cmd.exe" : "powershell.exe",
+                FileName = exe,
                 UseShellExecute = true,
                 WindowStyle = ProcessWindowStyle.Minimized
             });

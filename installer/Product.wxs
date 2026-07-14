@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Installer MSI di DesktopPager3D-OS (WiX Toolset v5) - per-macchina, Program Files -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="DesktopPager3D-OS"
+           Manufacturer="FabioNET"
+           Version="1.0.0"
+           UpgradeCode="ECC28E03-FC2F-4AC0-8B96-396059578D48"
+           Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="È già installata una versione più recente di DesktopPager3D-OS." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon.ico" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/fabionet/DesktopPager3D-OS" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/fabionet/DesktopPager3D-OS" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="DesktopPager3D-OS" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="Main" Title="DesktopPager3D-OS" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)\**" />
+    </ComponentGroup>
+
+    <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder" Guid="F7A6E80E-96FC-49A8-8316-1BF6E830590D">
+      <Shortcut Id="StartShortcut"
+                Name="DesktopPager3D-OS"
+                Target="[INSTALLFOLDER]DesktopPager3D-OS.exe"
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="AppIcon.ico" />
+      <RemoveFolder Id="RemoveProgramMenu" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\FabioNET\DesktopPager3D-OS"
+                     Name="installed" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+  </Package>
+</Wix>

@@ -69,7 +69,7 @@ public sealed class Shop3DWindow : Window
 
     public Shop3DWindow()
     {
-        Title = "DesktopPager - Vista 3D Game";
+        Title = "DesktopPager3D-OS - Vista 3D Game";
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         WindowState = WindowState.Maximized;

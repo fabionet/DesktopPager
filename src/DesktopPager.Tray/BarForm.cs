@@ -66,7 +66,8 @@ public sealed class BarForm : Form
         _cmd.Click += (_, _) => _terminal.ShowTerminal("cmd");
         _flow.Click += (_, _) => OpenCoverFlow();
         _game.Click += (_, _) => OpenShop3D();
-        _explorer.Click += (_, _) => Launch("explorer.exe");
+        _explorer.Click += (_, _) => Launch(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"));
 
         _tips.SetToolTip(_moveA, "Sposta la barra");
         _tips.SetToolTip(_moveB, "Sposta la barra");
@@ -106,7 +107,7 @@ public sealed class BarForm : Form
     }
 
     private static string QuickLaunchFolder =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DesktopPager", "QuickLaunch");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DesktopPager3D-OS", "QuickLaunch");
 
     private static Button MakeButton(string text)
     {
@@ -467,7 +468,7 @@ public sealed class BarForm : Form
         {
             MessageBox.Show(
                 "Impossibile aprire la Vista 3D Game:\n" + ex.Message,
-                "DesktopPager",
+                "DesktopPager3D-OS",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
         }
