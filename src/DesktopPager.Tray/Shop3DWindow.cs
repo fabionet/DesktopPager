@@ -3,9 +3,12 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Media.Media3D;
 using System.Windows.Threading;
+using WpfRectangle = System.Windows.Shapes.Rectangle;
+using WpfPath = System.Windows.Shapes.Path;
 using Drawing = System.Drawing;
 using DrawingImaging = System.Drawing.Imaging;
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
@@ -57,13 +60,24 @@ public sealed class Shop3DWindow : Window
     private double _px, _pz, _yaw;
     private double _roomHalfW, _roomBackZ;
 
+    // ingresso cinematografico
+    private readonly Grid _rootGrid = new();
+    private readonly Grid _loadingOverlay = new();
+    private readonly Canvas _doorCanvas = new();
+    private readonly WpfRectangle[] _doorPanes = new WpfRectangle[4];
+    private bool _introDone;
+
     public Shop3DWindow()
     {
         Title = "DesktopPager - Vista 3D Game";
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         WindowState = WindowState.Maximized;
-        Background = new SolidColorBrush(Color.FromRgb(6, 6, 10));
+        // sfondo a gradiente (cielo) per staccare bene gli oggetti
+        Background = new LinearGradientBrush(
+            Color.FromRgb(36, 74, 118),
+            Color.FromRgb(9, 13, 24),
+            new Point(0.5, 0), new Point(0.5, 1));
         ShowInTaskbar = false;
         Topmost = true;
 
@@ -80,15 +94,17 @@ public sealed class Shop3DWindow : Window
         hint.Foreground = new SolidColorBrush(Color.FromRgb(150, 150, 165));
         hint.Text = "frecce / WASD = muoviti e gira   •   Invio = entra o apri   •   Backspace = indietro   •   Esc = esci";
 
-        var grid = new Grid();
-        grid.Children.Add(_viewport);
-        grid.Children.Add(_pathLabel);
-        grid.Children.Add(_focusLabel);
-        grid.Children.Add(hint);
-        Content = grid;
+        _rootGrid.Children.Add(_viewport);
+        _rootGrid.Children.Add(_pathLabel);
+        _rootGrid.Children.Add(_focusLabel);
+        _rootGrid.Children.Add(hint);
+        BuildIntroOverlays();
+        _rootGrid.Children.Add(_doorCanvas);
+        _rootGrid.Children.Add(_loadingOverlay);
+        Content = _rootGrid;
 
         _loop.Tick += (_, _) => Tick();
-        Loaded += (_, _) => { Activate(); Focus(); Navigate(null); _loop.Start(); };
+        Loaded += (_, _) => { Activate(); Focus(); Navigate(null); PlayIntro(); };
         KeyDown += OnKeyDown;
         KeyUp += (_, e) => _keys.Remove(e.Key);
         MouseLeftButtonUp += OnClick;
@@ -113,13 +129,193 @@ public sealed class Shop3DWindow : Window
         };
     }
 
+    // --- ingresso cinematografico -----------------------------------------
+
+    private void BuildIntroOverlays()
+    {
+        // porta bianca stile logo Windows: 4 pannelli con una sottile fuga
+        _doorCanvas.Background = System.Windows.Media.Brushes.Transparent;
+        _doorCanvas.Visibility = Visibility.Collapsed;
+        for (var i = 0; i < 4; i++)
+        {
+            var pane = new WpfRectangle
+            {
+                Fill = System.Windows.Media.Brushes.White,
+                RenderTransform = new TranslateTransform()
+            };
+            _doorPanes[i] = pane;
+            _doorCanvas.Children.Add(pane);
+        }
+
+        // schermata di caricamento
+        _loadingOverlay.Background = new SolidColorBrush(Color.FromRgb(9, 13, 24));
+        _loadingOverlay.Visibility = Visibility.Collapsed;
+        var spinner = new WpfPath
+        {
+            Stroke = new SolidColorBrush(Color.FromRgb(120, 180, 255)),
+            StrokeThickness = 6,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            Width = 72,
+            Height = 72,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Data = new PathGeometry(new[]
+            {
+                new PathFigure(new Point(60, 36), new[]
+                {
+                    new ArcSegment(new Point(12, 36), new System.Windows.Size(24, 24), 0, true, SweepDirection.Clockwise, true)
+                }, false)
+            }),
+            RenderTransformOrigin = new Point(0.5, 0.5)
+        };
+        var spin = new RotateTransform();
+        spinner.RenderTransform = spin;
+        spin.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromSeconds(1))
+        {
+            RepeatBehavior = RepeatBehavior.Forever
+        });
+        var loadText = new TextBlock
+        {
+            Text = "Caricamento…",
+            Foreground = System.Windows.Media.Brushes.White,
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 18,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 110, 0, 0)
+        };
+        _loadingOverlay.Children.Add(spinner);
+        _loadingOverlay.Children.Add(loadText);
+    }
+
+    private void PlayIntro()
+    {
+        _introDone = false;
+        var w = ActualWidth;
+        var h = ActualHeight;
+
+        // camera in vista aerea sopra i banchi, guardando in basso
+        _camera.Position = new Point3D(0, 15, -1);
+        _camera.LookDirection = new Vector3D(0, -1, -0.18);
+
+        // prepara i 4 pannelli della porta (2x2) partendo sopra lo schermo
+        var halfW = w / 2;
+        var halfH = h / 2;
+        var gap = 3.0;
+        var geo = new[] { (0.0, 0.0), (halfW + gap, 0.0), (0.0, halfH + gap), (halfW + gap, halfH + gap) };
+        for (var i = 0; i < 4; i++)
+        {
+            var pane = _doorPanes[i];
+            pane.Width = halfW - gap;
+            pane.Height = halfH - gap;
+            Canvas.SetLeft(pane, geo[i].Item1);
+            Canvas.SetTop(pane, geo[i].Item2);
+            pane.Opacity = 1;
+            ((TranslateTransform)pane.RenderTransform).X = 0;
+            ((TranslateTransform)pane.RenderTransform).Y = -h; // fuori schermo in alto
+        }
+
+        _loadingOverlay.Opacity = 1;
+        _loadingOverlay.Visibility = Visibility.Visible;
+        _doorCanvas.Visibility = Visibility.Collapsed;
+
+        // fase 1: caricamento (~1.1s)
+        After(1100, () =>
+        {
+            _loadingOverlay.BeginAnimation(OpacityProperty, Fade(1, 0, 300));
+            After(300, () => _loadingOverlay.Visibility = Visibility.Collapsed);
+
+            // fase 2: la porta cade dall'alto e si compone (~0.55s)
+            _doorCanvas.Visibility = Visibility.Visible;
+            foreach (var pane in _doorPanes)
+            {
+                ((TranslateTransform)pane.RenderTransform).BeginAnimation(TranslateTransform.YProperty,
+                    new DoubleAnimation(-h, 0, TimeSpan.FromMilliseconds(550))
+                    {
+                        EasingFunction = new BounceEase { Bounces = 1, Bounciness = 3, EasingMode = EasingMode.EaseOut }
+                    });
+            }
+
+            // fase 3: la porta si apre in 4 parti + atterraggio della camera
+            After(700, () =>
+            {
+                OpenDoors(halfW, halfH);
+                LandCamera();
+                After(2050, FinishIntro);
+            });
+        });
+    }
+
+    private void OpenDoors(double halfW, double halfH)
+    {
+        var dur = TimeSpan.FromMilliseconds(1000);
+        var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
+        (double dx, double dy)[] dir = { (-halfW, -halfH), (halfW, -halfH), (-halfW, halfH), (halfW, halfH) };
+        for (var i = 0; i < 4; i++)
+        {
+            var t = (TranslateTransform)_doorPanes[i].RenderTransform;
+            t.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0, dir[i].dx, dur) { EasingFunction = ease });
+            t.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, dir[i].dy, dur) { EasingFunction = ease });
+            _doorPanes[i].BeginAnimation(OpacityProperty, Fade(1, 0, 1000));
+        }
+    }
+
+    private void LandCamera()
+    {
+        var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
+        var posAnim = new Point3DAnimation(new Point3D(0, 15, -1), new Point3D(0, 1.65, 10),
+            TimeSpan.FromMilliseconds(2000)) { EasingFunction = ease };
+        var lookAnim = new Vector3DAnimation(new Vector3D(0, -1, -0.18), new Vector3D(0, -0.08, -1),
+            TimeSpan.FromMilliseconds(2000)) { EasingFunction = ease };
+        _camera.BeginAnimation(PerspectiveCamera.PositionProperty, posAnim);
+        _camera.BeginAnimation(PerspectiveCamera.LookDirectionProperty, lookAnim);
+    }
+
+    private void FinishIntro()
+    {
+        // libera la camera dalle animazioni e passa al controllo manuale
+        _camera.BeginAnimation(PerspectiveCamera.PositionProperty, null);
+        _camera.BeginAnimation(PerspectiveCamera.LookDirectionProperty, null);
+        _doorCanvas.Visibility = Visibility.Collapsed;
+        _px = 0;
+        _pz = 10;
+        _yaw = 0;
+        _introDone = true;
+        if (!_loop.IsEnabled)
+        {
+            _loop.Start();
+        }
+    }
+
+    private static DoubleAnimation Fade(double from, double to, int ms) =>
+        new(from, to, TimeSpan.FromMilliseconds(ms));
+
+    private void After(int ms, Action action)
+    {
+        var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(ms) };
+        t.Tick += (_, _) => { t.Stop(); action(); };
+        t.Start();
+    }
+
     // --- input ------------------------------------------------------------
 
     private void OnKeyDown(object sender, WpfKeyEventArgs e)
     {
+        if (e.Key == Key.Escape)
+        {
+            if (!_introDone) { FinishIntro(); return; } // salta l'intro
+            Close();
+            return;
+        }
+
+        if (!_introDone)
+        {
+            return; // ignora gli altri comandi durante l'ingresso
+        }
+
         switch (e.Key)
         {
-            case Key.Escape: Close(); return;
             case Key.Enter: ActivateFocus(); return;
             case Key.Back: GoUp(); return;
             default: _keys.Add(e.Key); break;
@@ -128,6 +324,11 @@ public sealed class Shop3DWindow : Window
 
     private void Tick()
     {
+        if (!_introDone)
+        {
+            return;
+        }
+
         var fwd = new Vector3D(Math.Sin(_yaw), 0, -Math.Cos(_yaw));
         var right = new Vector3D(Math.Cos(_yaw), 0, Math.Sin(_yaw));
 
@@ -186,6 +387,11 @@ public sealed class Shop3DWindow : Window
 
     private void OnClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
+        if (!_introDone)
+        {
+            return;
+        }
+
         var pos = e.GetPosition(_viewport);
         var hit = VisualTreeHelper.HitTest(_viewport, pos) as RayMeshGeometry3DHitTestResult;
         if (hit?.ModelHit is GeometryModel3D model && _modelToEntry.TryGetValue(model, out var index))
