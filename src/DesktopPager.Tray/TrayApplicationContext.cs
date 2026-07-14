@@ -32,6 +32,13 @@ public sealed class TrayApplicationContext : ApplicationContext
         var barItem = new ToolStripMenuItem("Barra a scomparsa") { Checked = true, CheckOnClick = true };
         barItem.CheckedChanged += (_, _) => { if (barItem.Checked) _bar.Show(); else _bar.Hide(); };
         trayMenu.Items.Add(barItem);
+        var replaceItem = new ToolStripMenuItem("Sostituisci la barra di Windows") { CheckOnClick = true };
+        replaceItem.Click += (_, _) =>
+        {
+            _bar.ToggleReplaceTaskbar();
+            replaceItem.Checked = _bar.ReplaceTaskbarEnabled;
+        };
+        trayMenu.Items.Add(replaceItem);
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add("Pagina avanti (Ctrl+Alt+PgGiù)", null, (_, _) => ChangePage(_pageManager.NextPage));
         trayMenu.Items.Add("Pagina indietro (Ctrl+Alt+PgSu)", null, (_, _) => ChangePage(_pageManager.PreviousPage));

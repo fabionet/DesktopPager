@@ -16,15 +16,26 @@ namespace DesktopPager.Tray;
 /// </summary>
 public sealed class BarForm : Form
 {
-    private enum Side { Top, Left, Right }
+    private enum Side { Top, Left, Right, Bottom }
 
     private const int Thickness = 48;
     private const int TabLength = 140;
     private const int TabThickness = 9;
     private const int ButtonSize = 38;
 
+    // palette rosso scuro con effetto in rilievo
+    private static readonly Color BarTop = Color.FromArgb(124, 26, 26);
+    private static readonly Color BarBottom = Color.FromArgb(58, 8, 8);
+    private static readonly Color BarMid = Color.FromArgb(98, 18, 18);
+    private static readonly Color BarHover = Color.FromArgb(152, 42, 42);
+    private static readonly Color BarHi = Color.FromArgb(188, 78, 78);
+    private static readonly Color BarShadow = Color.FromArgb(22, 2, 2);
+    private static readonly Color BarText = Color.White;
+
     private Side _side = Side.Top;
     private bool _expanded;
+    private bool _replaceTaskbar;   // sostituisce la barra di Windows
+    private bool _alwaysVisible;    // non collassare (modalità sostituzione)
     private int _pinned; // > 0 se un dialogo/menu e' aperto: non collassare
 
     private readonly System.Windows.Forms.Timer _watch = new() { Interval = 300 };
@@ -100,11 +111,51 @@ public sealed class BarForm : Form
         DragEnter += (_, e) => { if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true) e.Effect = DragDropEffects.Copy; };
         DragDrop += OnFileDrop;
 
+        // menu col tasto destro su tutta la barra
+        HookRightClick(this);
+        foreach (Control c in Controls)
+        {
+            HookRightClick(c);
+        }
+
         Directory.CreateDirectory(QuickLaunchFolder);
         SeedDefaultShortcuts();
         ReloadQuickItems();
         Collapse();
         _watch.Start();
+    }
+
+    private void HookRightClick(Control c)
+    {
+        c.MouseUp += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Right)
+            {
+                ShowBarMenu();
+            }
+        };
+    }
+
+    public void ShowBarMenu()
+    {
+        var m = new ContextMenuStrip();
+        var repl = new ToolStripMenuItem("Sostituisci la barra di Windows")
+        {
+            Checked = _replaceTaskbar,
+            CheckOnClick = true
+        };
+        repl.Click += (_, _) => ToggleReplaceTaskbar();
+        m.Items.Add(repl);
+        m.Items.Add(new ToolStripSeparator());
+        m.Items.Add("Aggancia in alto", null, (_, _) => { if (_replaceTaskbar) SetReplaceTaskbar(false); _side = Side.Top; Expand(); });
+        m.Items.Add("Aggancia a sinistra", null, (_, _) => { if (_replaceTaskbar) SetReplaceTaskbar(false); _side = Side.Left; Expand(); });
+        m.Items.Add("Aggancia a destra", null, (_, _) => { if (_replaceTaskbar) SetReplaceTaskbar(false); _side = Side.Right; Expand(); });
+
+        _pinned++;
+        m.Closed += (_, _) => _pinned--;
+        SetForegroundWindow(Handle);
+        Activate();
+        m.Show(Cursor.Position);
     }
 
     protected override CreateParams CreateParams
@@ -139,22 +190,27 @@ public sealed class BarForm : Form
 
     private Rectangle EdgeBounds()
     {
-        var wa = Screen.PrimaryScreen!.WorkingArea;
+        var scr = Screen.PrimaryScreen!;
+        // in modalità sostituzione usa tutto lo schermo (copre la barra di Windows)
+        var wa = _replaceTaskbar ? scr.Bounds : scr.WorkingArea;
         return _side switch
         {
             Side.Left => new Rectangle(wa.Left, wa.Top, Thickness, wa.Height),
             Side.Right => new Rectangle(wa.Right - Thickness, wa.Top, Thickness, wa.Height),
+            Side.Bottom => new Rectangle(wa.Left, wa.Bottom - Thickness, wa.Width, Thickness),
             _ => new Rectangle(wa.Left, wa.Top, wa.Width, Thickness)
         };
     }
 
     private Rectangle TabBounds()
     {
-        var wa = Screen.PrimaryScreen!.WorkingArea;
+        var scr = Screen.PrimaryScreen!;
+        var wa = _replaceTaskbar ? scr.Bounds : scr.WorkingArea;
         return _side switch
         {
             Side.Left => new Rectangle(wa.Left, wa.Top + (wa.Height - TabLength) / 2, TabThickness, TabLength),
             Side.Right => new Rectangle(wa.Right - TabThickness, wa.Top + (wa.Height - TabLength) / 2, TabThickness, TabLength),
+            Side.Bottom => new Rectangle(wa.Left + (wa.Width - TabLength) / 2, wa.Bottom - TabThickness, TabLength, TabThickness),
             _ => new Rectangle(wa.Left + (wa.Width - TabLength) / 2, wa.Top, TabLength, TabThickness)
         };
     }
@@ -179,7 +235,7 @@ public sealed class BarForm : Form
 
     private void CollapseIfIdle()
     {
-        if (_expanded && _pinned == 0 && !Bounds.Contains(Cursor.Position))
+        if (_expanded && !_alwaysVisible && _pinned == 0 && !Bounds.Contains(Cursor.Position))
         {
             Collapse();
         }
@@ -187,26 +243,28 @@ public sealed class BarForm : Form
 
     private void ApplyTheme()
     {
-        BackColor = ThemeService.BarBackground;
-        var fg = ThemeService.BarForeground;
-        var hover = ThemeService.ButtonHover;
+        BackColor = BarTop;
         foreach (Control c in Controls)
         {
-            c.ForeColor = fg;
+            c.ForeColor = BarText;
             if (c is Button b)
             {
-                b.BackColor = BackColor;
-                b.FlatAppearance.MouseOverBackColor = hover;
+                b.BackColor = BarMid;
+                b.FlatAppearance.MouseOverBackColor = BarHover;
+            }
+            else
+            {
+                c.BackColor = Color.Transparent; // etichette/icone: lascia vedere il rilievo
             }
         }
-        _start.BackColor = BackColor; // angoli trasparenti della moneta si fondono col fondo
+        _start.BackColor = Color.Transparent;
     }
 
     // --- layout ----------------------------------------------------------
 
     private void LayoutControls()
     {
-        var horizontal = _side == Side.Top;
+        var horizontal = _side is Side.Top or Side.Bottom;
         UpdateMoveGlyphs();
 
         var head = new List<Control> { _moveA };
@@ -250,6 +308,7 @@ public sealed class BarForm : Form
         switch (_side)
         {
             case Side.Top:
+            case Side.Bottom:
                 _moveA.Text = "◀"; _tips.SetToolTip(_moveA, "Aggancia a sinistra");
                 _moveB.Text = "▶"; _tips.SetToolTip(_moveB, "Aggancia a destra");
                 break;
@@ -266,6 +325,12 @@ public sealed class BarForm : Form
 
     private void MoveDock(bool first)
     {
+        // spostando la barra si esce dalla modalità sostituzione
+        if (_replaceTaskbar)
+        {
+            SetReplaceTaskbar(false);
+        }
+
         _side = (_side, first) switch
         {
             (Side.Top, true) => Side.Left,
@@ -277,6 +342,61 @@ public sealed class BarForm : Form
         };
         Expand();
     }
+
+    // --- sostituzione della barra di Windows ------------------------------
+
+    public bool ReplaceTaskbarEnabled => _replaceTaskbar;
+
+    public void ToggleReplaceTaskbar() => SetReplaceTaskbar(!_replaceTaskbar);
+
+    private void SetReplaceTaskbar(bool on)
+    {
+        _replaceTaskbar = on;
+        _alwaysVisible = on;
+        ShowWindowsTaskbar(!on);   // nasconde/mostra la barra di Windows
+
+        if (on)
+        {
+            _side = Side.Bottom;
+            Expand();
+            _moveA.Visible = false;
+            _moveB.Visible = false;
+            TopMost = true;
+        }
+        else
+        {
+            _side = Side.Top;
+            _moveA.Visible = true;
+            _moveB.Visible = true;
+            Collapse();
+        }
+    }
+
+    private static void ShowWindowsTaskbar(bool visible)
+    {
+        var cmd = visible ? 5 : 0; // SW_SHOW : SW_HIDE
+        var tray = FindWindow("Shell_TrayWnd", null);
+        if (tray != IntPtr.Zero)
+        {
+            ShowWindow(tray, cmd);
+        }
+
+        // eventuali barre secondarie (multi-monitor)
+        var sec = IntPtr.Zero;
+        while ((sec = FindWindowEx(IntPtr.Zero, sec, "Shell_SecondaryTrayWnd", null)) != IntPtr.Zero)
+        {
+            ShowWindow(sec, cmd);
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string lpClassName, string? lpWindowName);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
     // --- avvii rapidi ------------------------------------------------------
 
@@ -624,34 +744,61 @@ public sealed class BarForm : Form
 
     // --- disegno linguetta -------------------------------------------------
 
-    protected override void OnPaint(PaintEventArgs e)
+    protected override void OnPaintBackground(PaintEventArgs e)
     {
-        base.OnPaint(e);
-        if (_expanded)
+        var r = ClientRectangle;
+        if (r.Width <= 0 || r.Height <= 0)
         {
-            using var pen = new Pen(ThemeService.Accent, 2f);
-            var r = ClientRectangle;
-            switch (_side)
-            {
-                case Side.Top: e.Graphics.DrawLine(pen, 0, r.Bottom - 1, r.Width, r.Bottom - 1); break;
-                case Side.Left: e.Graphics.DrawLine(pen, r.Right - 1, 0, r.Right - 1, r.Height); break;
-                default: e.Graphics.DrawLine(pen, 0, 0, 0, r.Height); break;
-            }
+            base.OnPaintBackground(e);
             return;
         }
 
-        // linguetta: pillola color accento con tre puntini
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var brush = new SolidBrush(ThemeService.Accent);
-        e.Graphics.FillRectangle(brush, ClientRectangle);
+        // gradiente per l'effetto in rilievo (chiaro sopra -> scuro sotto)
+        var vertical = _side != Side.Left && _side != Side.Right;
+        using var lg = new LinearGradientBrush(r, BarTop, BarBottom, vertical ? 90f : 0f);
+        e.Graphics.FillRectangle(lg, r);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        var g = e.Graphics;
+        var r = ClientRectangle;
+        var horizontal = _side is Side.Top or Side.Bottom;
+
+        // bisello: bordo chiaro sul lato "in luce", ombra sul lato opposto
+        using var hi = new Pen(BarHi, 1f);
+        using var sh = new Pen(BarShadow, 2f);
+        if (horizontal)
+        {
+            g.DrawLine(hi, 0, 0, r.Width, 0);
+            g.DrawLine(sh, 0, r.Bottom - 1, r.Width, r.Bottom - 1);
+        }
+        else if (_side == Side.Left)
+        {
+            g.DrawLine(hi, 0, 0, 0, r.Height);
+            g.DrawLine(sh, r.Right - 1, 0, r.Right - 1, r.Height);
+        }
+        else
+        {
+            g.DrawLine(hi, r.Right - 1, 0, r.Right - 1, r.Height);
+            g.DrawLine(sh, 0, 0, 0, r.Height);
+        }
+
+        if (_expanded)
+        {
+            return;
+        }
+
+        // linguetta chiusa: tre puntini bianchi (lo sfondo è già il gradiente rosso)
+        g.SmoothingMode = SmoothingMode.AntiAlias;
         using var dots = new SolidBrush(Color.White);
-        var horizontal = _side == Side.Top;
         var cx = Width / 2;
         var cy = Height / 2;
         for (var i = -1; i <= 1; i++)
         {
             var p = horizontal ? new Point(cx + i * 12, cy) : new Point(cx, cy + i * 12);
-            e.Graphics.FillEllipse(dots, p.X - 2, p.Y - 2, 4, 4);
+            g.FillEllipse(dots, p.X - 2, p.Y - 2, 4, 4);
         }
     }
 
@@ -661,6 +808,10 @@ public sealed class BarForm : Form
         _clockTick.Stop();
         _terminal.CloseTerminal();
         _terminal.Dispose();
+        if (_replaceTaskbar)
+        {
+            ShowWindowsTaskbar(true); // non lasciare la barra di Windows nascosta
+        }
         base.OnFormClosed(e);
     }
 }
