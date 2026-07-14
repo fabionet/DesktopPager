@@ -1,6 +1,23 @@
 ﻿# DesktopPager
 Applicazione desktop Windows per la gestione a pagine delle icone sul desktop.
 
+## Come funziona (v0.2)
+Il motore di paging **non sposta mai le icone**: fa scorrere la vista della
+ListView del desktop con `LVM_SCROLL`, dopo aver rimosso temporaneamente lo
+stile `LVS_NOSCROLL` (che altrimenti fa ignorare il comando). Tornando alla
+prima pagina lo stile originale viene ripristinato e il desktop resta
+esattamente com'era. Funziona anche con "disposizione automatica" attiva.
+
+Il vecchio approccio (riposizionamento fisico delle icone) e' stato rimosso:
+inviava `LVM_SETITEMPOSITION32` con le coordinate in `lParam`, ma quel
+messaggio si aspetta un puntatore a `POINT` — Explorer dereferenziava un
+puntatore non valido e crashava.
+
+Hotkey globali:
+- `Ctrl+Alt+PgGiu` — pagina avanti
+- `Ctrl+Alt+PgSu` — pagina indietro
+- `Ctrl+Alt+Home` — prima pagina
+
 ## Istruzioni Git del progetto
 Flusso consigliato per lavorare sul repository abionet/DesktopPager.
 
@@ -25,4 +42,7 @@ Build (Visual Studio generator):
 cmake -S . -B build-cpp -G  Visual Studio 17 2022 -A x64
 cmake --build build-cpp --config Release
 Eseguibile: build-cpp\src\DesktopPager.NativeCpp\Release\DesktopPagerNative.exe
-Hotkey: Ctrl+Shift+PgUp, Ctrl+Shift+PgDn, Ctrl+Shift+Fine.
+Build alternativa (MinGW/w64devkit):
+cmake -S . -B build-cpp -G "MinGW Makefiles"
+cmake --build build-cpp
+Hotkey: Ctrl+Alt+PgGiu, Ctrl+Alt+PgSu, Ctrl+Alt+Home.

@@ -14,9 +14,8 @@ public sealed class TrayApplicationContext : ApplicationContext
     public TrayApplicationContext()
     {
         var pagerService = new DesktopIconPagerService();
-        _pageManager = new DesktopPageManager(maxPages: 10, iconsPerPage: 100, pagerService);
+        _pageManager = new DesktopPageManager(pagerService);
         _pageManager.RefreshState();
-        _pageManager.EnsureBaselineLayout();
         _autostartService = new AutostartService();
 
         _hotkeyManager = new GlobalHotkeyManager();
@@ -24,10 +23,9 @@ public sealed class TrayApplicationContext : ApplicationContext
         var hotkeysRegistered = _hotkeyManager.Register(_window.Handle);
 
         var trayMenu = new ContextMenuStrip();
-        trayMenu.Items.Add("Pagina successiva (Ctrl+Shift+PgUp)", null, (_, _) => ChangePage(_pageManager.NextPage));
-        trayMenu.Items.Add("Pagina precedente (Ctrl+Shift+PgDn)", null, (_, _) => ChangePage(_pageManager.PreviousPage));
-        trayMenu.Items.Add("Pagina principale (Ctrl+Shift+Fine)", null, (_, _) => ChangePage(_pageManager.GoToMainPage));
-        trayMenu.Items.Add("Ripristina layout iniziale", null, (_, _) => _pageManager.RestoreBaselineLayout());
+        trayMenu.Items.Add("Pagina avanti (Ctrl+Alt+PgGiù)", null, (_, _) => ChangePage(_pageManager.NextPage));
+        trayMenu.Items.Add("Pagina indietro (Ctrl+Alt+PgSu)", null, (_, _) => ChangePage(_pageManager.PreviousPage));
+        trayMenu.Items.Add("Prima pagina (Ctrl+Alt+Home)", null, (_, _) => ChangePage(_pageManager.GoToMainPage));
         var autostartItem = new ToolStripMenuItem("Avvio automatico con Windows")
         {
             Checked = _autostartService.IsEnabled()
@@ -72,7 +70,8 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     protected override void ExitThreadCore()
     {
-        _pageManager.RestoreBaselineLayout();
+        // lascia il desktop come l'abbiamo trovato (scroll a zero, stile originale)
+        _pageManager.GoToMainPage();
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
         _hotkeyManager.Dispose();
