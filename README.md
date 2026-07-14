@@ -38,9 +38,12 @@ scuro di Windows e il colore accento DWM. La barra ospita:
 - **terminali a tendina** PowerShell (PS) e CMD (>_): scendono fino a meta'
   schermo con la vera console incorporata e restano fissi finche' non si
   chiudono con la X.
-- **vista 3D (3D)**: cover flow delle anteprime dei file di una cartella,
-  in GDI+ puro (nessuna GPU: adatta a macchine datate). Frecce/rotella/clic
-  laterali per scorrere, Invio o doppio clic per aprire, Esc per chiudere.
+- **vista 3D (3D)**: cover flow a schermo intero delle anteprime dei file.
+  3D reale in WPF (Viewport3D con camera prospettica, copertine texturizzate
+  inclinate nello spazio e riflessi a pavimento), accelerato dalla GPU con
+  fallback software; se WPF non e' disponibile ripiega sulla resa GDI+ senza
+  GPU per macchine molto datate. Frecce/rotella/clic laterali per scorrere,
+  Invio o doppio clic per aprire, Esc per chiudere.
 - **Esplora file** e orologio, come la barra di Windows.
 
 ## Istruzioni Git del progetto

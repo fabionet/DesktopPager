@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.IO;
 using System.Windows.Forms;
 
 namespace DesktopPager.Tray;
@@ -436,7 +437,16 @@ public sealed class BarForm : Form
             };
             if (dlg.ShowDialog() == DialogResult.OK)
             {
-                new CoverFlowForm(dlg.SelectedPath).Show();
+                try
+                {
+                    // 3D reale accelerato (WPF); fallback GDI+ se non disponibile
+                    var win = new CoverFlow3DWindow(dlg.SelectedPath);
+                    win.Show();
+                }
+                catch
+                {
+                    new CoverFlowForm(dlg.SelectedPath).Show();
+                }
             }
         }
         finally
