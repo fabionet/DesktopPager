@@ -2,13 +2,24 @@
 #include <commctrl.h>
 #include <shellapi.h>
 #include <strsafe.h>
-#include <vector>
-#include <set>
-#include <map>
+#include <tlhelp32.h>
 #include <algorithm>
 #include <string>
 #include <cstdio>
 #include "resource.h"
+
+// DesktopPager nativo: sfoglia le "pagine" delle icone del desktop.
+//
+// Il motore NON sposta mai le icone: fa scorrere la vista della ListView
+// del desktop con LVM_SCROLL. Il vecchio approccio a riposizionamento
+// (LVM_SETITEMPOSITION32 con MAKELPARAM) passava coordinate dove la
+// ListView si aspetta un puntatore a POINT: Explorer dereferenziava un
+// puntatore non valido e crashava. Inoltre lo spostamento fisico e'
+// incompatibile con la "disposizione automatica" delle icone.
+//
+// Nota chiave: il desktop ha lo stile LVS_NOSCROLL, che fa ignorare
+// LVM_SCROLL. Va rimosso prima di scorrere e ripristinato quando si
+// torna alla prima pagina, cosi' il desktop resta com'era.
 
 namespace
 {
@@ -17,25 +28,34 @@ constexpr UINT WM_TRAYICON = WM_APP + 1;
 constexpr int HOTKEY_NEXT = 1;
 constexpr int HOTKEY_PREV = 2;
 constexpr int HOTKEY_HOME = 3;
+constexpr int HOTKEY_RESTART_EXPLORER = 4;
+constexpr int HOTKEY_FLIP_SCREEN = 5;     // Ctrl+Alt+Su: sottosopra
+constexpr int HOTKEY_RESET_SCREEN = 6;    // Ctrl+Alt+Giu: normale
+constexpr int HOTKEY_ROTATE_LEFT = 7;     // Ctrl+Alt+Sinistra
+constexpr int HOTKEY_ROTATE_RIGHT = 8;    // Ctrl+Alt+Destra
+constexpr int HOTKEY_PANIC_RESET = 9;     // Ctrl+Alt+Shift+^: emergenza
 
-constexpr UINT MODIFIERS = MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT;
+constexpr UINT MODIFIERS = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
 
 constexpr UINT IDM_NEXT = 1001;
 constexpr UINT IDM_PREV = 1002;
 constexpr UINT IDM_HOME = 1003;
 constexpr UINT IDM_AUTOSTART = 1004;
 constexpr UINT IDM_EXIT = 1005;
-constexpr UINT IDM_RESTORE_ORIGINAL = 1006;
+constexpr UINT IDM_RESTART_EXPLORER = 1006;
+constexpr UINT IDM_ROTATE_180 = 1007;
+constexpr UINT IDM_ROTATE_0 = 1008;
+constexpr UINT IDM_ROTATE_90 = 1009;
+constexpr UINT IDM_ROTATE_270 = 1010;
 
-constexpr int ICONS_PER_PAGE = 100;
-constexpr int MAX_PAGES = 10;
-constexpr int SPACING_X = 90;
-constexpr int SPACING_Y = 90;
-constexpr int HIDDEN_OFFSET_MULTIPLIER = 6;
-
-constexpr UINT LVM_GETITEMPOSITION_NATIVE = 0x1010;
+constexpr UINT LVM_SCROLL_MSG = LVM_FIRST + 20;
+constexpr UINT LVM_GETITEMSPACING_MSG = LVM_FIRST + 51;
+constexpr DWORD LVS_NOSCROLL_STYLE = 0x2000;
 constexpr UINT SMTO_ABORT_IF_HUNG_FLAG = 0x0002;
-constexpr UINT SEND_TIMEOUT_MS = 100;
+constexpr UINT SEND_TIMEOUT_MS = 500;
+
+// un delta enorme viene comunque limitato dal range: "salta all'ultima pagina"
+constexpr int JUMP_TO_END_PAGES = 100;
 
 constexpr wchar_t WINDOW_CLASS_NAME[] = L"DesktopPagerNativeWindow";
 constexpr wchar_t APP_NAME[] = L"DesktopPager";
@@ -50,24 +70,12 @@ struct AppState
 
     int currentPage = 1;
     int totalPages = 1;
-    int iconCount = 0;
-    int lastAppliedPage = -1;
-
-    RECT desktopRect{};
-    std::vector<POINT> baselineSlots;
-
-    std::vector<POINT> originalIconPositions;
-    bool hasOriginalSnapshot = false;
 
     bool autostartEnabled = false;
+    UINT taskbarCreatedMessage = 0;
 };
 
 AppState g_state;
-
-int ClampCoord(int value)
-{
-    return std::clamp(value, -32760, 32760);
-}
 
 std::wstring GetLogFilePath()
 {
@@ -152,211 +160,139 @@ HWND GetDesktopListView()
     return FindWindowExW(shellView, nullptr, L"SysListView32", L"FolderView");
 }
 
-int GetDesktopIconCount()
+bool IsHorizontalLayout(HWND listView)
 {
-    const auto listView = GetDesktopListView();
-    if (listView == nullptr)
-    {
-        return 0;
-    }
-
-    LRESULT count = 0;
-    if (!SendListMessageTimeout(listView, LVM_GETITEMCOUNT, 0, 0, &count))
-    {
-        return 0;
-    }
-
-    return static_cast<int>(count);
+    // Con "disposizione automatica" il desktop riempie colonne da sinistra
+    // (LVS_ALIGNLEFT): l'overflow finisce oltre il bordo destro e si
+    // sfoglia in orizzontale. Altrimenti in verticale.
+    const auto style = GetWindowLongPtrW(listView, GWL_STYLE);
+    return (style & LVS_ALIGNMASK) == LVS_ALIGNLEFT;
 }
 
-bool TryGetDesktopRect(RECT& rect)
+void SetNoScrollStyle(HWND listView, bool enabled)
 {
-    const auto listView = GetDesktopListView();
-    if (listView == nullptr)
+    const auto style = GetWindowLongPtrW(listView, GWL_STYLE);
+    const bool hasNoScroll = (style & LVS_NOSCROLL_STYLE) != 0;
+    if (enabled == hasNoScroll)
+    {
+        return;
+    }
+
+    const auto newStyle = enabled
+        ? (style | LVS_NOSCROLL_STYLE)
+        : (style & ~static_cast<LONG_PTR>(LVS_NOSCROLL_STYLE));
+    SetWindowLongPtrW(listView, GWL_STYLE, newStyle);
+}
+
+bool TryGetScrollStatus(HWND listView, int& position, int& maxRange, int& pageSize)
+{
+    SCROLLINFO si{};
+    si.cbSize = sizeof(si);
+    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    const int bar = IsHorizontalLayout(listView) ? SB_HORZ : SB_VERT;
+    if (!GetScrollInfo(listView, bar, &si))
     {
         return false;
     }
 
-    return GetClientRect(listView, &rect) != 0;
-}
-
-bool TrySetDesktopIconPosition(int iconIndex, int x, int y)
-{
-    const auto listView = GetDesktopListView();
-    if (listView == nullptr)
+    if (si.nPage == 0 && si.nMax == 0)
     {
         return false;
     }
 
-    const short sx = static_cast<short>(ClampCoord(x));
-    const short sy = static_cast<short>(ClampCoord(y));
-    const LPARAM lp = MAKELPARAM(sx, sy);
-
-    LRESULT result = 0;
-    return SendListMessageTimeout(
-        listView,
-        LVM_SETITEMPOSITION32,
-        static_cast<WPARAM>(iconIndex),
-        lp,
-        &result) && result != 0;
+    position = si.nPos;
+    maxRange = si.nMax;
+    pageSize = static_cast<int>(si.nPage);
+    return true;
 }
 
-std::pair<int, int> GetPageRange(int page, int iconCount)
+bool ScrollByPages(HWND listView, int pageDelta)
 {
-    const int start = std::max(0, (page - 1) * ICONS_PER_PAGE);
-    const int endExclusive = std::min(iconCount, start + ICONS_PER_PAGE);
-    return { start, endExclusive };
-}
-
-void BuildBaselineSlots(AppState& state)
-{
-    state.baselineSlots.clear();
-    const auto width = std::max(1L, state.desktopRect.right - state.desktopRect.left);
-    const auto maxColumns = std::max(1L, width / SPACING_X);
-
-    constexpr int maxSlots = 1000;
-    state.baselineSlots.reserve(maxSlots);
-    for (int slot = 0; slot < maxSlots; ++slot)
-    {
-        const int col = slot % static_cast<int>(maxColumns);
-        const int row = slot / static_cast<int>(maxColumns);
-        POINT p{};
-        p.x = ClampCoord(state.desktopRect.left + 8 + (col * SPACING_X));
-        p.y = ClampCoord(state.desktopRect.top + 8 + (row * SPACING_Y));
-        state.baselineSlots.push_back(p);
-    }
-}
-
-POINT BuildTargetPositionForPage(const AppState& state, int iconIndex, int page)
-{
-    const auto [start, endExclusive] = GetPageRange(page, state.iconCount);
-    const bool visible = iconIndex >= start && iconIndex < endExclusive;
-    if (visible)
-    {
-        const int slotIndex = iconIndex - start;
-        if (slotIndex >= 0 && slotIndex < static_cast<int>(state.baselineSlots.size()))
-        {
-            return state.baselineSlots[slotIndex];
-        }
-    }
-
-    const int hiddenBaseX = ClampCoord(state.desktopRect.right + (SPACING_X * HIDDEN_OFFSET_MULTIPLIER));
-    const int hiddenY = ClampCoord(std::max(state.desktopRect.top + 8, 8L));
-    POINT p{};
-    p.x = ClampCoord(hiddenBaseX + (iconIndex * 4));
-    p.y = hiddenY;
-    return p;
-}
-
-bool TryCaptureCurrentIconPositions(std::vector<POINT>& outPositions)
-{
-    outPositions.clear();
-    const auto listView = GetDesktopListView();
-    if (listView == nullptr)
-    {
-        Log(L"TryCaptureCurrentIconPositions: desktop list view not found.");
-        return false;
-    }
-
-    const int count = GetDesktopIconCount();
-    if (count <= 0)
+    if (pageDelta == 0)
     {
         return true;
     }
 
-    DWORD processId = 0;
-    GetWindowThreadProcessId(listView, &processId);
-    const auto process = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION, FALSE, processId);
-    if (process == nullptr)
+    SetNoScrollStyle(listView, false);
+
+    RECT rc{};
+    if (!GetClientRect(listView, &rc))
     {
-        Log(L"TryCaptureCurrentIconPositions: OpenProcess failed.");
         return false;
     }
 
-    const auto remotePoint = VirtualAllocEx(process, nullptr, sizeof(POINT), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (remotePoint == nullptr)
+    LRESULT spacing = 0;
+    SendListMessageTimeout(listView, LVM_GETITEMSPACING_MSG, FALSE, 0, &spacing);
+    const int spacingX = static_cast<int>(LOWORD(spacing));
+    const int spacingY = static_cast<int>(HIWORD(spacing));
+
+    const bool horizontal = IsHorizontalLayout(listView);
+    int dx = 0;
+    int dy = 0;
+    if (horizontal)
     {
-        CloseHandle(process);
-        Log(L"TryCaptureCurrentIconPositions: VirtualAllocEx failed.");
-        return false;
+        // una colonna di sovrapposizione per non perdere il filo
+        int step = rc.right - spacingX;
+        if (step < spacingX)
+        {
+            step = rc.right;
+        }
+        dx = pageDelta * step;
+    }
+    else
+    {
+        int step = rc.bottom - spacingY;
+        if (step < spacingY)
+        {
+            step = rc.bottom;
+        }
+        dy = pageDelta * step;
     }
 
-    bool ok = true;
-    outPositions.reserve(count);
-    for (int i = 0; i < count; ++i)
+    int beforePos = 0;
+    int maxRange = 0;
+    int pageSize = 0;
+    if (!TryGetScrollStatus(listView, beforePos, maxRange, pageSize))
     {
-        LRESULT result = 0;
-        if (!SendListMessageTimeout(
+        beforePos = 0;
+    }
+
+    LRESULT result = 0;
+    const bool ok = SendListMessageTimeout(listView, LVM_SCROLL_MSG, dx, dy, &result) && result != 0;
+
+    // Quando la scrollbar compare per la prima volta la ListView fa un
+    // re-layout che puo' assorbire parte dello scroll: verifica la
+    // posizione raggiunta e correggi la differenza.
+    int afterPos = 0;
+    if (ok && TryGetScrollStatus(listView, afterPos, maxRange, pageSize))
+    {
+        const int maxPosition = std::max(0, maxRange - pageSize + 1);
+        const int target = std::clamp(beforePos + (horizontal ? dx : dy), 0, maxPosition);
+        const int diff = target - afterPos;
+        if (diff != 0)
+        {
+            SendListMessageTimeout(
                 listView,
-                LVM_GETITEMPOSITION_NATIVE,
-                static_cast<WPARAM>(i),
-                reinterpret_cast<LPARAM>(remotePoint),
-                &result) || result == 0)
-        {
-            ok = false;
-            break;
+                LVM_SCROLL_MSG,
+                horizontal ? diff : 0,
+                horizontal ? 0 : diff,
+                nullptr);
         }
-
-        POINT p{};
-        SIZE_T bytesRead = 0;
-        if (!ReadProcessMemory(process, remotePoint, &p, sizeof(p), &bytesRead) || bytesRead != sizeof(p))
-        {
-            ok = false;
-            break;
-        }
-
-        p.x = ClampCoord(p.x);
-        p.y = ClampCoord(p.y);
-        outPositions.push_back(p);
     }
 
-    VirtualFreeEx(process, remotePoint, 0, MEM_RELEASE);
-    CloseHandle(process);
-
-    if (!ok)
-    {
-        outPositions.clear();
-        Log(L"TryCaptureCurrentIconPositions: failed while reading icon positions.");
-    }
     return ok;
 }
 
-void RefreshState(AppState& state)
+bool ResetScroll(HWND listView)
 {
-    state.iconCount = std::max(0, GetDesktopIconCount());
-    const int computedPages = state.iconCount == 0
-        ? 1
-        : static_cast<int>((state.iconCount + ICONS_PER_PAGE - 1) / ICONS_PER_PAGE);
-    state.totalPages = std::clamp(computedPages, 1, MAX_PAGES);
-    state.currentPage = std::clamp(state.currentPage, 1, state.totalPages);
-
-    RECT latestRect{};
-    if (!TryGetDesktopRect(latestRect))
-    {
-        latestRect = RECT{ 0, 0, 1920, 1080 };
-    }
-
-    const bool geometryChanged =
-        latestRect.left != state.desktopRect.left ||
-        latestRect.top != state.desktopRect.top ||
-        latestRect.right != state.desktopRect.right ||
-        latestRect.bottom != state.desktopRect.bottom;
-
-    if (geometryChanged)
-    {
-        state.desktopRect = latestRect;
-        BuildBaselineSlots(state);
-        state.lastAppliedPage = -1;
-        Log(L"RefreshState: desktop geometry changed; baseline rebuilt.");
-    }
-    else if (state.baselineSlots.empty())
-    {
-        state.desktopRect = latestRect;
-        BuildBaselineSlots(state);
-    }
+    SetNoScrollStyle(listView, false);
+    SendListMessageTimeout(listView, LVM_SCROLL_MSG, -32768, -32768, nullptr);
+    SetNoScrollStyle(listView, true);
+    InvalidateRect(listView, nullptr, TRUE);
+    return true;
 }
 
-void UpdateTrayTooltip(const AppState& state)
+void UpdateTrayTooltip(AppState& state)
 {
     wchar_t tooltip[128]{};
     StringCchPrintfW(tooltip, _countof(tooltip), L"DesktopPager - Pagina %d/%d", state.currentPage, state.totalPages);
@@ -365,125 +301,208 @@ void UpdateTrayTooltip(const AppState& state)
     Shell_NotifyIconW(NIM_MODIFY, &copy);
 }
 
-bool RestoreOriginalLayout(AppState& state)
+void RefreshPageState(AppState& state, HWND listView)
 {
-    RefreshState(state);
-    if (!state.hasOriginalSnapshot || state.originalIconPositions.size() != static_cast<size_t>(state.iconCount))
+    int pos = 0;
+    int maxRange = 0;
+    int pageSize = 0;
+    if (listView != nullptr && TryGetScrollStatus(listView, pos, maxRange, pageSize) && pageSize > 0)
     {
-        Log(L"RestoreOriginalLayout: original snapshot unavailable.");
-        return false;
-    }
-
-    bool success = true;
-    for (int i = 0; i < state.iconCount; ++i)
-    {
-        const auto& p = state.originalIconPositions[i];
-        if (!TrySetDesktopIconPosition(i, p.x, p.y))
-        {
-            success = false;
-        }
-    }
-
-    if (success)
-    {
-        state.currentPage = 1;
-        state.lastAppliedPage = -1;
-        UpdateTrayTooltip(state);
-        Log(L"RestoreOriginalLayout: success.");
+        state.totalPages = std::max(1, static_cast<int>((maxRange + pageSize) / pageSize));
+        const int maxPosition = std::max(0, maxRange - pageSize + 1);
+        state.currentPage = (maxPosition == 0 || state.totalPages == 1)
+            ? 1
+            : 1 + static_cast<int>((static_cast<double>(pos) / maxPosition) * (state.totalPages - 1) + 0.5);
     }
     else
     {
-        Log(L"RestoreOriginalLayout: partial failure.");
+        // scrollbar assente (LVS_NOSCROLL attivo): siamo alla prima pagina
+        state.currentPage = std::clamp(state.currentPage, 1, state.totalPages);
     }
-    return success;
+    UpdateTrayTooltip(state);
 }
 
-bool ApplyPage(AppState& state, int targetPage)
+void GoToFirstPage(AppState& state)
 {
-    RefreshState(state);
-    if (targetPage < 1 || targetPage > state.totalPages)
+    const auto listView = GetDesktopListView();
+    if (listView == nullptr)
+    {
+        Log(L"GoToFirstPage: desktop list view not found.");
+        return;
+    }
+
+    ResetScroll(listView);
+    state.currentPage = 1;
+    UpdateTrayTooltip(state);
+}
+
+void GoToNextPage(AppState& state)
+{
+    const auto listView = GetDesktopListView();
+    if (listView == nullptr)
+    {
+        Log(L"GoToNextPage: desktop list view not found.");
+        return;
+    }
+
+    int before = 0;
+    int maxRange = 0;
+    int pageSize = 0;
+    const bool hadStatus = TryGetScrollStatus(listView, before, maxRange, pageSize);
+
+    ScrollByPages(listView, +1);
+
+    // se eravamo gia' a fine corsa la posizione non cambia: wrap alla prima
+    int after = 0;
+    if (hadStatus && TryGetScrollStatus(listView, after, maxRange, pageSize) && after == before)
+    {
+        ResetScroll(listView);
+        state.currentPage = 1;
+        UpdateTrayTooltip(state);
+        return;
+    }
+
+    RefreshPageState(state, listView);
+}
+
+void GoToPreviousPage(AppState& state)
+{
+    const auto listView = GetDesktopListView();
+    if (listView == nullptr)
+    {
+        Log(L"GoToPreviousPage: desktop list view not found.");
+        return;
+    }
+
+    int pos = 0;
+    int maxRange = 0;
+    int pageSize = 0;
+    if (!TryGetScrollStatus(listView, pos, maxRange, pageSize) || pos <= 0)
+    {
+        // prima pagina: wrap all'ultima
+        ScrollByPages(listView, JUMP_TO_END_PAGES);
+        RefreshPageState(state, listView);
+        return;
+    }
+
+    ScrollByPages(listView, -1);
+
+    // se siamo tornati all'origine, ripristina lo stile originale del desktop
+    if (TryGetScrollStatus(listView, pos, maxRange, pageSize) && pos <= 0)
+    {
+        ResetScroll(listView);
+        state.currentPage = 1;
+        UpdateTrayTooltip(state);
+        return;
+    }
+
+    RefreshPageState(state, listView);
+}
+
+// Ruota lo schermo principale (DMDO_DEFAULT/90/180/270), come le
+// hotkey dei driver video Intel.
+bool RotateScreen(int orientation)
+{
+    if (orientation < DMDO_DEFAULT || orientation > DMDO_270)
     {
         return false;
     }
 
-    if (state.iconCount <= 0)
+    DEVMODEW dm{};
+    dm.dmSize = sizeof(dm);
+    if (!EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &dm))
     {
-        state.currentPage = 1;
-        state.lastAppliedPage = 1;
-        UpdateTrayTooltip(state);
+        return false;
+    }
+
+    if (static_cast<int>(dm.dmDisplayOrientation) == orientation)
+    {
         return true;
     }
 
-    std::set<int> affected;
-    if (state.lastAppliedPage > 0)
+    // passando tra orizzontale e verticale vanno scambiate le dimensioni
+    if (((dm.dmDisplayOrientation + orientation) & 1) == 1)
     {
-        const auto [prevStart, prevEnd] = GetPageRange(state.lastAppliedPage, state.iconCount);
-        for (int i = prevStart; i < prevEnd; ++i)
-        {
-            affected.insert(i);
-        }
-    }
-    else
-    {
-        for (int i = 0; i < state.iconCount; ++i)
-        {
-            affected.insert(i);
-        }
+        std::swap(dm.dmPelsWidth, dm.dmPelsHeight);
     }
 
-    const auto [currStart, currEnd] = GetPageRange(targetPage, state.iconCount);
-    for (int i = currStart; i < currEnd; ++i)
+    dm.dmDisplayOrientation = orientation;
+    const auto result = ChangeDisplaySettingsW(&dm, 0);
+    if (result != DISP_CHANGE_SUCCESSFUL)
     {
-        affected.insert(i);
+        Log(L"RotateScreen: ChangeDisplaySettings failed.");
+        return false;
     }
+    return true;
+}
 
-    std::map<int, POINT> rollbackPositions;
-    const bool canRollbackFromLast = state.lastAppliedPage > 0;
-    const bool canRollbackFromSnapshot = state.hasOriginalSnapshot && state.originalIconPositions.size() == static_cast<size_t>(state.iconCount);
-    if (canRollbackFromLast || canRollbackFromSnapshot)
-    {
-        for (int iconIndex : affected)
-        {
-            if (canRollbackFromLast)
-            {
-                rollbackPositions[iconIndex] = BuildTargetPositionForPage(state, iconIndex, state.lastAppliedPage);
-            }
-            else
-            {
-                rollbackPositions[iconIndex] = state.originalIconPositions[iconIndex];
-            }
-        }
-    }
+// Tasto del carattere '^' nel layout corrente (italiana: Shift+ì, 0xDD)
+UINT GetCaretVirtualKey()
+{
+    const SHORT scan = VkKeyScanW(L'^');
+    return scan == -1 ? 0xDD : static_cast<UINT>(scan & 0xFF);
+}
 
-    std::vector<int> movedIcons;
-    bool success = true;
-    for (int iconIndex : affected)
+void RestartExplorer(AppState& state)
+{
+    Log(L"RestartExplorer: requested.");
+
+    // chiudi tutte le istanze di explorer.exe
+    const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot != INVALID_HANDLE_VALUE)
     {
-        const auto target = BuildTargetPositionForPage(state, iconIndex, targetPage);
-        if (!TrySetDesktopIconPosition(iconIndex, target.x, target.y))
+        PROCESSENTRY32W entry{};
+        entry.dwSize = sizeof(entry);
+        if (Process32FirstW(snapshot, &entry))
         {
-            Log(L"ApplyPage: icon move failed, starting rollback.");
-            success = false;
-            for (int moved : movedIcons)
+            do
             {
-                const auto it = rollbackPositions.find(moved);
-                if (it != rollbackPositions.end())
+                if (_wcsicmp(entry.szExeFile, L"explorer.exe") == 0)
                 {
-                    TrySetDesktopIconPosition(moved, it->second.x, it->second.y);
+                    const auto process = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, entry.th32ProcessID);
+                    if (process != nullptr)
+                    {
+                        TerminateProcess(process, 0);
+                        WaitForSingleObject(process, 5000);
+                        CloseHandle(process);
+                    }
                 }
-            }
-            break;
+            } while (Process32NextW(snapshot, &entry));
         }
-        movedIcons.push_back(iconIndex);
+        CloseHandle(snapshot);
     }
 
-    if (success)
+    // Winlogon di solito rilancia la shell da solo: dagli un momento.
+    Sleep(1500);
+
+    bool running = false;
+    const auto check = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (check != INVALID_HANDLE_VALUE)
     {
-        state.currentPage = targetPage;
-        state.lastAppliedPage = targetPage;
-        UpdateTrayTooltip(state);
+        PROCESSENTRY32W entry{};
+        entry.dwSize = sizeof(entry);
+        if (Process32FirstW(check, &entry))
+        {
+            do
+            {
+                if (_wcsicmp(entry.szExeFile, L"explorer.exe") == 0)
+                {
+                    running = true;
+                    break;
+                }
+            } while (Process32NextW(check, &entry));
+        }
+        CloseHandle(check);
     }
-    return success;
+
+    if (!running)
+    {
+        ShellExecuteW(nullptr, L"open", L"explorer.exe", nullptr, nullptr, SW_SHOWNORMAL);
+    }
+
+    state.currentPage = 1;
+    state.totalPages = 1;
+    Log(L"RestartExplorer: done.");
 }
 
 bool IsAutostartEnabled()
@@ -541,10 +560,19 @@ void ShowContextMenu(HWND hwnd)
         return;
     }
 
-    AppendMenuW(menu, MF_STRING, IDM_NEXT, L"Pagina successiva (Ctrl+Shift+PgUp)");
-    AppendMenuW(menu, MF_STRING, IDM_PREV, L"Pagina precedente (Ctrl+Shift+PgDn)");
-    AppendMenuW(menu, MF_STRING, IDM_HOME, L"Pagina principale (Ctrl+Shift+Fine)");
-    AppendMenuW(menu, MF_STRING, IDM_RESTORE_ORIGINAL, L"Ripristina layout originale");
+    AppendMenuW(menu, MF_STRING, IDM_NEXT, L"Pagina avanti\tCtrl+Alt+PgGiu");
+    AppendMenuW(menu, MF_STRING, IDM_PREV, L"Pagina indietro\tCtrl+Alt+PgSu");
+    AppendMenuW(menu, MF_STRING, IDM_HOME, L"Prima pagina\tCtrl+Alt+Home");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    HMENU rotateMenu = CreatePopupMenu();
+    AppendMenuW(rotateMenu, MF_STRING, IDM_ROTATE_180, L"Sottosopra\tCtrl+Alt+Su");
+    AppendMenuW(rotateMenu, MF_STRING, IDM_ROTATE_0, L"Normale\tCtrl+Alt+Giu");
+    AppendMenuW(rotateMenu, MF_STRING, IDM_ROTATE_90, L"Barra a sinistra\tCtrl+Alt+Sinistra");
+    AppendMenuW(rotateMenu, MF_STRING, IDM_ROTATE_270, L"Barra a destra\tCtrl+Alt+Destra");
+    AppendMenuW(rotateMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(rotateMenu, MF_STRING, IDM_ROTATE_0, L"Emergenza: ripristina\tCtrl+Alt+Shift+^");
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(rotateMenu), L"Ruota schermo");
+    AppendMenuW(menu, MF_STRING, IDM_RESTART_EXPLORER, L"Riavvia Explorer\tCtrl+Alt+Fine");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (g_state.autostartEnabled ? MF_CHECKED : MF_UNCHECKED), IDM_AUTOSTART, L"Avvio automatico con Windows");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -572,6 +600,13 @@ void InitTrayIcon(HWND hwnd)
 
 void Cleanup()
 {
+    // lascia il desktop come l'abbiamo trovato
+    const auto listView = GetDesktopListView();
+    if (listView != nullptr)
+    {
+        ResetScroll(listView);
+    }
+
     Shell_NotifyIconW(NIM_DELETE, &g_state.nid);
     if (g_state.icon != nullptr)
     {
@@ -599,20 +634,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             g_state.icon = LoadIconW(nullptr, IDI_APPLICATION);
         }
 
+        g_state.taskbarCreatedMessage = RegisterWindowMessageW(L"TaskbarCreated");
         InitTrayIcon(hwnd);
         g_state.autostartEnabled = IsAutostartEnabled();
-        RefreshState(g_state);
-        g_state.hasOriginalSnapshot = TryCaptureCurrentIconPositions(g_state.originalIconPositions);
-        if (g_state.hasOriginalSnapshot)
-        {
-            Log(L"WM_CREATE: original icon snapshot captured.");
-        }
         UpdateTrayTooltip(g_state);
 
-        const bool h1 = RegisterHotKey(hwnd, HOTKEY_NEXT, MODIFIERS, VK_PRIOR) != 0;
-        const bool h2 = RegisterHotKey(hwnd, HOTKEY_PREV, MODIFIERS, VK_NEXT) != 0;
-        const bool h3 = RegisterHotKey(hwnd, HOTKEY_HOME, MODIFIERS, VK_END) != 0;
-        if (!(h1 && h2 && h3))
+        const bool h1 = RegisterHotKey(hwnd, HOTKEY_NEXT, MODIFIERS, VK_NEXT) != 0;
+        const bool h2 = RegisterHotKey(hwnd, HOTKEY_PREV, MODIFIERS, VK_PRIOR) != 0;
+        const bool h3 = RegisterHotKey(hwnd, HOTKEY_HOME, MODIFIERS, VK_HOME) != 0;
+        const bool h4 = RegisterHotKey(hwnd, HOTKEY_RESTART_EXPLORER, MODIFIERS, VK_END) != 0;
+        const bool h5 = RegisterHotKey(hwnd, HOTKEY_FLIP_SCREEN, MODIFIERS, VK_UP) != 0;
+        const bool h6 = RegisterHotKey(hwnd, HOTKEY_RESET_SCREEN, MODIFIERS, VK_DOWN) != 0;
+        const bool h7 = RegisterHotKey(hwnd, HOTKEY_ROTATE_LEFT, MODIFIERS, VK_LEFT) != 0;
+        const bool h8 = RegisterHotKey(hwnd, HOTKEY_ROTATE_RIGHT, MODIFIERS, VK_RIGHT) != 0;
+        const bool h9 = RegisterHotKey(hwnd, HOTKEY_PANIC_RESET, MODIFIERS | MOD_SHIFT, GetCaretVirtualKey()) != 0;
+        if (!(h1 && h2 && h3 && h4 && h5 && h6 && h7 && h8 && h9))
         {
             MessageBoxW(hwnd, L"Impossibile registrare una o più hotkey globali.", APP_NAME, MB_ICONWARNING | MB_OK);
             Log(L"WM_CREATE: one or more hotkeys could not be registered.");
@@ -623,13 +659,29 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         switch (wParam)
         {
         case HOTKEY_NEXT:
-            ApplyPage(g_state, g_state.currentPage >= g_state.totalPages ? 1 : g_state.currentPage + 1);
+            GoToNextPage(g_state);
             break;
         case HOTKEY_PREV:
-            ApplyPage(g_state, g_state.currentPage <= 1 ? g_state.totalPages : g_state.currentPage - 1);
+            GoToPreviousPage(g_state);
             break;
         case HOTKEY_HOME:
-            ApplyPage(g_state, 1);
+            GoToFirstPage(g_state);
+            break;
+        case HOTKEY_RESTART_EXPLORER:
+            RestartExplorer(g_state);
+            break;
+        case HOTKEY_FLIP_SCREEN:
+            RotateScreen(DMDO_180);
+            break;
+        case HOTKEY_RESET_SCREEN:
+        case HOTKEY_PANIC_RESET:
+            RotateScreen(DMDO_DEFAULT);
+            break;
+        case HOTKEY_ROTATE_LEFT:
+            RotateScreen(DMDO_90);
+            break;
+        case HOTKEY_ROTATE_RIGHT:
+            RotateScreen(DMDO_270);
             break;
         default:
             break;
@@ -639,19 +691,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         switch (LOWORD(wParam))
         {
         case IDM_NEXT:
-            ApplyPage(g_state, g_state.currentPage >= g_state.totalPages ? 1 : g_state.currentPage + 1);
+            GoToNextPage(g_state);
             break;
         case IDM_PREV:
-            ApplyPage(g_state, g_state.currentPage <= 1 ? g_state.totalPages : g_state.currentPage - 1);
+            GoToPreviousPage(g_state);
             break;
         case IDM_HOME:
-            ApplyPage(g_state, 1);
+            GoToFirstPage(g_state);
             break;
-        case IDM_RESTORE_ORIGINAL:
-            if (!RestoreOriginalLayout(g_state))
-            {
-                ApplyPage(g_state, 1);
-            }
+        case IDM_RESTART_EXPLORER:
+            RestartExplorer(g_state);
+            break;
+        case IDM_ROTATE_180:
+            RotateScreen(DMDO_180);
+            break;
+        case IDM_ROTATE_0:
+            RotateScreen(DMDO_DEFAULT);
+            break;
+        case IDM_ROTATE_90:
+            RotateScreen(DMDO_90);
+            break;
+        case IDM_ROTATE_270:
+            RotateScreen(DMDO_270);
             break;
         case IDM_AUTOSTART:
         {
@@ -684,10 +745,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         UnregisterHotKey(hwnd, HOTKEY_NEXT);
         UnregisterHotKey(hwnd, HOTKEY_PREV);
         UnregisterHotKey(hwnd, HOTKEY_HOME);
+        for (int id = HOTKEY_RESTART_EXPLORER + 1; id <= HOTKEY_PANIC_RESET; ++id)
+        {
+            UnregisterHotKey(hwnd, id);
+        }
+        UnregisterHotKey(hwnd, HOTKEY_RESTART_EXPLORER);
         Cleanup();
         PostQuitMessage(0);
         return 0;
     default:
+        // Explorer riavviato: la taskbar e' nuova, la tray icon va ricreata
+        if (message == g_state.taskbarCreatedMessage && g_state.taskbarCreatedMessage != 0)
+        {
+            Shell_NotifyIconW(NIM_ADD, &g_state.nid);
+            UpdateTrayTooltip(g_state);
+            return 0;
+        }
         return DefWindowProcW(hwnd, message, wParam, lParam);
     }
 }
@@ -695,6 +768,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int)
 {
+    // istanza singola
+    CreateMutexW(nullptr, TRUE, L"DesktopPagerNative_SingleInstance");
+    if (GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        MessageBoxW(nullptr, L"DesktopPager è già in esecuzione.", APP_NAME, MB_ICONINFORMATION | MB_OK);
+        return 0;
+    }
+
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = WndProc;

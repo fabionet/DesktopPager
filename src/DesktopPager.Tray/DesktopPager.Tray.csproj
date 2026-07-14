@@ -3,12 +3,13 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationIcon>Assets\DesktopPager.ico</ApplicationIcon>
-    <Version>0.1.0</Version>
-    <FileVersion>0.1.0.0</FileVersion>
-    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <Version>0.5.0</Version>
+    <FileVersion>0.5.0.0</FileVersion>
+    <AssemblyVersion>0.5.0.0</AssemblyVersion>
   </PropertyGroup>
   <ItemGroup>
     <None Update="Assets\DesktopPager.ico">

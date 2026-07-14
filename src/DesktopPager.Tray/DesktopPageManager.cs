@@ -2,89 +2,98 @@ namespace DesktopPager.Tray;
 
 public sealed class DesktopPageManager
 {
-    private readonly int _maxPages;
-    private readonly int _iconsPerPage;
+    // Un delta molto grande viene comunque limitato dal range della ListView:
+    // e' il modo piu' semplice per "saltare all'ultima pagina".
+    private const int JumpToEndPages = 100;
+
     private readonly IDesktopIconPagerService _pagerService;
 
-    public DesktopPageManager(int maxPages, int iconsPerPage, IDesktopIconPagerService pagerService)
+    public DesktopPageManager(IDesktopIconPagerService pagerService)
     {
-        if (maxPages <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(maxPages));
-        }
-
-        if (iconsPerPage <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(iconsPerPage));
-        }
-
-        _maxPages = maxPages;
-        _iconsPerPage = iconsPerPage;
         _pagerService = pagerService ?? throw new ArgumentNullException(nameof(pagerService));
-
-        CurrentPage = 1;
-        TotalPages = 1;
     }
 
-    public int CurrentPage { get; private set; }
-    public int TotalPages { get; private set; }
+    public int CurrentPage { get; private set; } = 1;
+    public int TotalPages { get; private set; } = 1;
     public int TotalIcons { get; private set; }
 
     public void RefreshState()
     {
         TotalIcons = Math.Max(0, _pagerService.GetDesktopIconCount());
-        var computedPages = TotalIcons == 0
-            ? 1
-            : (int)Math.Ceiling(TotalIcons / (double)_iconsPerPage);
 
-        TotalPages = Math.Clamp(computedPages, 1, _maxPages);
-        CurrentPage = Math.Clamp(CurrentPage, 1, TotalPages);
+        if (_pagerService.TryGetScrollStatus(out var status) && status.PageSize > 0)
+        {
+            TotalPages = Math.Max(1, (int)Math.Ceiling((status.MaxRange + 1) / (double)status.PageSize));
+            var maxPosition = Math.Max(0, status.MaxRange - status.PageSize + 1);
+            CurrentPage = maxPosition == 0 || TotalPages == 1
+                ? 1
+                : 1 + (int)Math.Round(status.Position / (double)maxPosition * (TotalPages - 1));
+        }
+        else
+        {
+            // Alla prima pagina lo stile originale del desktop (LVS_NOSCROLL)
+            // e' attivo e la scrollbar non esiste: manteniamo l'ultimo stato noto.
+            CurrentPage = Math.Clamp(CurrentPage, 1, TotalPages);
+        }
     }
 
     public bool NextPage()
     {
+        var hadStatus = _pagerService.TryGetScrollStatus(out var before);
+
+        var ok = _pagerService.ScrollByPages(1);
         RefreshState();
-        var targetPage = CurrentPage >= TotalPages ? 1 : CurrentPage + 1;
-        return ApplyPage(targetPage);
+
+        // Se eravamo gia' a fine corsa la posizione non cambia: wrap alla prima.
+        if (ok && hadStatus
+            && _pagerService.TryGetScrollStatus(out var after)
+            && after.Position == before.Position)
+        {
+            ok = ResetToFirstPage();
+        }
+
+        return ok;
     }
 
     public bool PreviousPage()
     {
         RefreshState();
-        var targetPage = CurrentPage <= 1 ? TotalPages : CurrentPage - 1;
-        return ApplyPage(targetPage);
+
+        bool ok;
+        if (!_pagerService.TryGetScrollStatus(out var status) || status.Position <= 0)
+        {
+            // prima pagina: wrap all'ultima
+            ok = _pagerService.ScrollByPages(JumpToEndPages);
+        }
+        else
+        {
+            ok = _pagerService.ScrollByPages(-1);
+        }
+
+        RefreshState();
+
+        // Se siamo tornati all'origine, ripristina lo stile originale del desktop.
+        if (ok && _pagerService.TryGetScrollStatus(out var after) && after.Position <= 0)
+        {
+            ok = ResetToFirstPage();
+        }
+
+        return ok;
     }
 
     public bool GoToMainPage()
     {
-        RefreshState();
-        return ApplyPage(1);
+        return ResetToFirstPage();
     }
 
-    public bool ApplyPage(int page)
+    private bool ResetToFirstPage()
     {
-        RefreshState();
-        if (page < 1 || page > TotalPages)
+        var ok = _pagerService.ResetScroll();
+        if (ok)
         {
-            throw new ArgumentOutOfRangeException(nameof(page), page, $"Page must be between 1 and {TotalPages}.");
+            CurrentPage = 1;
         }
 
-        if (!_pagerService.ApplyPageLayout(page, _iconsPerPage))
-        {
-            return false;
-        }
-
-        CurrentPage = page;
-        return true;
-    }
-
-    public bool EnsureBaselineLayout()
-    {
-        return _pagerService.EnsureBaselineLayout();
-    }
-
-    public bool RestoreBaselineLayout()
-    {
-        return _pagerService.RestoreBaselineLayout();
+        return ok;
     }
 }
