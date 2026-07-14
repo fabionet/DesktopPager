@@ -4,7 +4,7 @@
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package Name="DesktopPager3D-OS"
            Manufacturer="FabioNET"
-           Version="1.0.0"
+           Version="1.1.0"
            UpgradeCode="ECC28E03-FC2F-4AC0-8B96-396059578D48"
            Scope="perMachine">
 

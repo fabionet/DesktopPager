@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
+using DesktopPager.Tray.DesktopEffects;
 
 namespace DesktopPager.Tray;
 
@@ -12,6 +13,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly AutostartService _autostartService;
     private readonly HotkeyWindow _window;
     private readonly BarForm _bar;
+    private readonly DesktopEffectsService _effects;
 
     public TrayApplicationContext()
     {
@@ -24,14 +26,28 @@ public sealed class TrayApplicationContext : ApplicationContext
         _window = new HotkeyWindow(_hotkeyManager, _pageManager, UpdateTooltip, RestartExplorer, RotateScreen);
         var hotkeysRegistered = _hotkeyManager.Register(_window.Handle);
 
+        // effetti desktop 3D (cubo di paginazione + finestre gelatina)
+        _effects = new DesktopEffectsService(dir =>
+        {
+            if (dir > 0) _pageManager.NextPage(); else _pageManager.PreviousPage();
+            UpdateTooltip();
+        });
+
         // barra a scomparsa stile Windows, visibile all'avvio
-        _bar = new BarForm();
+        _bar = new BarForm { Effects = _effects };
         _bar.Show();
 
         var trayMenu = new ContextMenuStrip();
         var barItem = new ToolStripMenuItem("Barra a scomparsa") { Checked = true, CheckOnClick = true };
         barItem.CheckedChanged += (_, _) => { if (barItem.Checked) _bar.Show(); else _bar.Hide(); };
         trayMenu.Items.Add(barItem);
+        var replaceItem = new ToolStripMenuItem("Sostituisci la barra di Windows") { CheckOnClick = true };
+        replaceItem.Click += (_, _) =>
+        {
+            _bar.ToggleReplaceTaskbar();
+            replaceItem.Checked = _bar.ReplaceTaskbarEnabled;
+        };
+        trayMenu.Items.Add(replaceItem);
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add("Pagina avanti (Ctrl+Alt+PgGiù)", null, (_, _) => ChangePage(_pageManager.NextPage));
         trayMenu.Items.Add("Pagina indietro (Ctrl+Alt+PgSu)", null, (_, _) => ChangePage(_pageManager.PreviousPage));
@@ -46,6 +62,23 @@ public sealed class TrayApplicationContext : ApplicationContext
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add(rotateMenu);
         trayMenu.Items.Add("Riavvia Explorer (Ctrl+Alt+Fine)", null, (_, _) => RestartExplorer());
+        trayMenu.Items.Add(new ToolStripSeparator());
+        var effectsMenu = new ToolStripMenuItem("Effetti desktop 3D");
+        var cubeItem = new ToolStripMenuItem("Cubo del desktop (Ctrl+tasto destro trascina)")
+        {
+            Checked = _effects.CubeEnabled,
+            CheckOnClick = true
+        };
+        cubeItem.Click += (_, _) => _effects.CubeEnabled = cubeItem.Checked;
+        var wobbleItem = new ToolStripMenuItem("Finestre gelatina (allo spostamento)")
+        {
+            Checked = _effects.WobbleEnabled,
+            CheckOnClick = true
+        };
+        wobbleItem.Click += (_, _) => _effects.WobbleEnabled = wobbleItem.Checked;
+        effectsMenu.DropDownItems.Add(cubeItem);
+        effectsMenu.DropDownItems.Add(wobbleItem);
+        trayMenu.Items.Add(effectsMenu);
         var autostartItem = new ToolStripMenuItem("Avvio automatico con Windows")
         {
             Checked = _autostartService.IsEnabled()
@@ -90,6 +123,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     protected override void ExitThreadCore()
     {
+        _effects.Dispose();
         _bar.Close();
         _bar.Dispose();
         // lascia il desktop come l'abbiamo trovato (scroll a zero, stile originale)
