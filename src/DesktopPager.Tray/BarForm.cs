@@ -18,7 +18,7 @@ public sealed class BarForm : Form
 {
     private enum Side { Top, Left, Right, Bottom }
 
-    private const int Thickness = 48;
+    private const int Thickness = 49; // +1px: la moneta risulta perfettamente centrata
     private const int TabLength = 140;
     private const int TabThickness = 9;
     private const int ButtonSize = 38;
@@ -54,12 +54,8 @@ public sealed class BarForm : Form
     private readonly FlatIconButton _explorer = MakeButton("📁");
     private readonly FlatIconButton _apps = MakeButton("☰");
     private readonly FlatIconButton _power = MakeButton("⏻");
-    private readonly PictureBox _start = new()
-    {
-        Size = new Size(StartSize, StartSize),
-        SizeMode = PictureBoxSizeMode.Zoom,
-        Cursor = Cursors.Hand
-    };
+    private readonly FlatIconButton _tray = MakeButton("▴");
+    private readonly CoinButton _start = new() { Size = new Size(StartSize, StartSize) };
     private readonly Label _clock = new()
     {
         AutoSize = false,
@@ -67,6 +63,24 @@ public sealed class BarForm : Form
         TextAlign = ContentAlignment.MiddleCenter,
         Font = new Font("Segoe UI", 9f, FontStyle.Bold)
     };
+    private readonly Label _perf = new()
+    {
+        AutoSize = false,
+        Size = new Size(58, ButtonSize),
+        TextAlign = ContentAlignment.MiddleLeft,
+        Font = new Font("Segoe UI", 7.5f, FontStyle.Bold)
+    };
+    private readonly Label _net = new()
+    {
+        AutoSize = false,
+        Size = new Size(58, ButtonSize),
+        TextAlign = ContentAlignment.MiddleCenter,
+        Font = new Font("Segoe UI", 8f, FontStyle.Bold)
+    };
+
+    private readonly PerfService _perfService = new();
+    private readonly NetworkService _netService = new();
+    private readonly System.Windows.Forms.Timer _statsTick = new() { Interval = 2000 };
 
     private readonly List<Control> _quickItems = new();
     private readonly ToolTip _tips = new();
@@ -91,8 +105,10 @@ public sealed class BarForm : Form
             Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"));
         _apps.Click += (_, _) => ShowOpenProgramsMenu();
         _power.Click += (_, _) => ShowPowerMenu();
-        _start.Image = MakeWindowsCoin(StartSize * 2);
-        _start.Click += (_, _) => ShowStartMenu();
+        _tray.Click += (_, _) => ShowTrayIconsMenu();
+        _start.Coin = MakeWindowsCoin(StartSize * 2);
+        _start.Activated += ShowStartMenu; // dopo l'animazione di "giro" della moneta
+        _net.Click += (_, _) => LaunchControl("ncpa.cpl");
 
         // icone nitide dal font di sistema (Segoe MDL2 Assets)
         _apps.Font = new Font("Segoe MDL2 Assets", 12f);
@@ -100,8 +116,12 @@ public sealed class BarForm : Form
         _power.Font = new Font("Segoe MDL2 Assets", 12f);
         _power.Text = "";  // PowerButton
 
+        _tray.Font = new Font("Segoe MDL2 Assets", 10f);
+        _tray.Text = "";   // icona chevron/tray
+
         _tips.SetToolTip(_apps, "Programmi aperti");
         _tips.SetToolTip(_power, "Spegni / Riavvia / Sospendi / Blocca");
+        _tips.SetToolTip(_tray, "Icone in tray (app ridotte a icona)");
         _tips.SetToolTip(_start, "Menu di sistema");
         _tips.SetToolTip(_moveA, "Sposta la barra");
         _tips.SetToolTip(_moveB, "Sposta la barra");
@@ -111,12 +131,15 @@ public sealed class BarForm : Form
         _tips.SetToolTip(_flow, "Vista 3D anteprime file (cover flow)");
         _tips.SetToolTip(_game, "Vista 3D Game (esplora dischi e cartelle in prima persona)");
         _tips.SetToolTip(_explorer, "Esplora file");
+        _tips.SetToolTip(_net, "Rete / WiFi (clic: connessioni di rete)");
 
-        Controls.AddRange(new Control[] { _start, _moveA, _moveB, _add, _ps, _cmd, _flow, _game, _explorer, _apps, _power, _clock });
+        Controls.AddRange(new Control[] { _start, _moveA, _moveB, _add, _ps, _cmd, _flow, _game, _explorer, _tray, _apps, _power, _perf, _net, _clock });
 
         _watch.Tick += (_, _) => CollapseIfIdle();
         _clockTick.Tick += (_, _) => _clock.Text = DateTime.Now.ToString("HH:mm");
         _clock.Text = DateTime.Now.ToString("HH:mm");
+        _statsTick.Tick += (_, _) => UpdateStats();
+        _statsTick.Start();
         _clockTick.Start();
 
         MouseEnter += (_, _) => { if (!_expanded) Expand(); };
@@ -232,6 +255,7 @@ public sealed class BarForm : Form
         Bounds = EdgeBounds();
         LayoutControls();
         foreach (Control c in Controls) c.Visible = true;
+        UpdateStats();
         Invalidate();
     }
 
@@ -277,7 +301,7 @@ public sealed class BarForm : Form
         UpdateMoveGlyphs();
 
         var head = new List<Control> { _moveA };
-        var tail = new List<Control> { _explorer, _ps, _cmd, _flow, _game, _apps, _power, _clock, _moveB };
+        var tail = new List<Control> { _explorer, _ps, _cmd, _flow, _game, _tray, _apps, _power, _perf, _net, _clock, _moveB };
         var middle = new List<Control>(_quickItems) { _add };
 
         var pad = 5;
@@ -717,6 +741,101 @@ public sealed class BarForm : Form
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
 
+    // --- prestazioni e rete ------------------------------------------------
+
+    private void UpdateStats()
+    {
+        if (!_expanded)
+        {
+            return; // aggiorna solo quando la barra è visibile
+        }
+
+        try
+        {
+            _perf.Text = $"CPU {_perfService.CpuPercent()}%\nRAM {_perfService.RamPercent()}%";
+
+            var (kind, signal) = _netService.Get();
+            _net.Text = kind switch
+            {
+                NetworkService.Kind.Wifi => signal >= 0 ? $"📶\n{signal}%" : "📶\nWiFi",
+                NetworkService.Kind.Ethernet => "🖧\nLAN",
+                NetworkService.Kind.Other => "🌐\nRete",
+                _ => "⚠\noffline"
+            };
+        }
+        catch
+        {
+            // ignora errori temporanei di lettura
+        }
+    }
+
+    // --- icone in tray (notification area) ---------------------------------
+
+    private void ShowTrayIconsMenu()
+    {
+        var m = new ContextMenuStrip();
+        List<TrayIconReader.TrayEntry> entries;
+        try
+        {
+            entries = TrayIconReader.Read();
+        }
+        catch
+        {
+            entries = new List<TrayIconReader.TrayEntry>();
+        }
+
+        if (entries.Count == 0)
+        {
+            var none = m.Items.Add("(nessuna icona in tray)");
+            none.Enabled = false;
+        }
+        else
+        {
+            foreach (var e in entries)
+            {
+                var item = m.Items.Add(e.Tooltip);
+                try
+                {
+                    item.Image = WindowIcon(e.OwnerHwnd);
+                }
+                catch
+                {
+                    // niente icona
+                }
+
+                var entry = e;
+                item.Click += (_, _) => RestoreTrayApp(entry);
+            }
+        }
+
+        _pinned++;
+        m.Closed += (_, _) => _pinned--;
+        SetForegroundWindow(Handle);
+        Activate();
+        m.Show(Cursor.Position);
+    }
+
+    private static void RestoreTrayApp(TrayIconReader.TrayEntry e)
+    {
+        if (e.OwnerHwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        // simula un doppio clic sull'icona in tray: la maggior parte delle app
+        // ripristina la finestra. In più prova ad attivare la finestra owner.
+        const uint WM_LBUTTONDBLCLK = 0x0203;
+        PostMessage(e.OwnerHwnd, e.CallbackMessage, (IntPtr)e.Id, (IntPtr)WM_LBUTTONDBLCLK);
+        if (IsIconic(e.OwnerHwnd))
+        {
+            ShowWindow(e.OwnerHwnd, 9);
+        }
+        SetForegroundWindow(e.OwnerHwnd);
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
     // --- programmi aperti --------------------------------------------------
 
     private void ShowOpenProgramsMenu()
@@ -869,6 +988,19 @@ public sealed class BarForm : Form
 
     private static bool Confirm(string message) =>
         MessageBox.Show(message, "DesktopPager3D-OS", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+
+    private static void LaunchControl(string cpl)
+    {
+        try
+        {
+            var control = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "control.exe");
+            Process.Start(new ProcessStartInfo { FileName = control, Arguments = cpl, UseShellExecute = true });
+        }
+        catch
+        {
+            // avvio fallito: ignora
+        }
+    }
 
     private static void RunShutdown(string args)
     {
@@ -1041,6 +1173,7 @@ public sealed class BarForm : Form
     {
         _watch.Stop();
         _clockTick.Stop();
+        _statsTick.Stop();
         _terminal.CloseTerminal();
         _terminal.Dispose();
         if (_replaceTaskbar)
