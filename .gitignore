@@ -3,6 +3,9 @@ bin/
 obj/
 out/
 artifacts/
+publish/
+*.msi
+*.wixpdb
 *.exe
 *.dll
 *.pdb

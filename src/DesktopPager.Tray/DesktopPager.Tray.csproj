@@ -7,9 +7,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationIcon>Assets\DesktopPager.ico</ApplicationIcon>
-    <Version>0.5.0</Version>
-    <FileVersion>0.5.0.0</FileVersion>
-    <AssemblyVersion>0.5.0.0</AssemblyVersion>
+    <AssemblyName>DesktopPager3D-OS</AssemblyName>
+    <Product>DesktopPager3D-OS</Product>
+    <AssemblyTitle>DesktopPager3D-OS</AssemblyTitle>
+    <Company>FabioNET</Company>
+    <Description>DesktopPager3D-OS — sfoglia le pagine delle icone del desktop, barra a scomparsa, terminali, vista 3D e Vista 3D Game</Description>
+    <Copyright>© 2026 FabioNET</Copyright>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
   </PropertyGroup>
   <ItemGroup>
     <None Update="Assets\DesktopPager.ico">

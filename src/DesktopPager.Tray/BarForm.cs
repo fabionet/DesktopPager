@@ -37,6 +37,7 @@ public sealed class BarForm : Form
     private readonly Button _ps = MakeButton("PS");
     private readonly Button _cmd = MakeButton(">_");
     private readonly Button _flow = MakeButton("3D");
+    private readonly Button _game = MakeButton("🎮");
     private readonly Button _explorer = MakeButton("📁");
     private readonly Label _clock = new()
     {
@@ -64,17 +65,20 @@ public sealed class BarForm : Form
         _ps.Click += (_, _) => _terminal.ShowTerminal("powershell");
         _cmd.Click += (_, _) => _terminal.ShowTerminal("cmd");
         _flow.Click += (_, _) => OpenCoverFlow();
-        _explorer.Click += (_, _) => Launch("explorer.exe");
+        _game.Click += (_, _) => OpenShop3D();
+        _explorer.Click += (_, _) => Launch(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"));
 
         _tips.SetToolTip(_moveA, "Sposta la barra");
         _tips.SetToolTip(_moveB, "Sposta la barra");
         _tips.SetToolTip(_add, "Aggiungi collegamento");
         _tips.SetToolTip(_ps, "PowerShell a tendina");
         _tips.SetToolTip(_cmd, "Prompt dei comandi a tendina");
-        _tips.SetToolTip(_flow, "Vista 3D anteprime file");
+        _tips.SetToolTip(_flow, "Vista 3D anteprime file (cover flow)");
+        _tips.SetToolTip(_game, "Vista 3D Game (esplora dischi e cartelle in prima persona)");
         _tips.SetToolTip(_explorer, "Esplora file");
 
-        Controls.AddRange(new Control[] { _moveA, _moveB, _add, _ps, _cmd, _flow, _explorer, _clock });
+        Controls.AddRange(new Control[] { _moveA, _moveB, _add, _ps, _cmd, _flow, _game, _explorer, _clock });
 
         _watch.Tick += (_, _) => CollapseIfIdle();
         _clockTick.Tick += (_, _) => _clock.Text = DateTime.Now.ToString("HH:mm");
@@ -103,7 +107,7 @@ public sealed class BarForm : Form
     }
 
     private static string QuickLaunchFolder =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DesktopPager", "QuickLaunch");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DesktopPager3D-OS", "QuickLaunch");
 
     private static Button MakeButton(string text)
     {
@@ -194,7 +198,7 @@ public sealed class BarForm : Form
         UpdateMoveGlyphs();
 
         var head = new List<Control> { _moveA };
-        var tail = new List<Control> { _explorer, _ps, _cmd, _flow, _clock, _moveB };
+        var tail = new List<Control> { _explorer, _ps, _cmd, _flow, _game, _clock, _moveB };
         var middle = new List<Control>(_quickItems) { _add };
 
         var pad = 5;
@@ -282,7 +286,10 @@ public sealed class BarForm : Form
             };
             try
             {
-                using var icon = Icon.ExtractAssociatedIcon(file);
+                // estrai l'icona del bersaglio, non del .lnk, cosi' non
+                // compare la freccetta di overlay dei collegamenti
+                var iconSource = ResolveShortcutTarget(file) ?? file;
+                using var icon = Icon.ExtractAssociatedIcon(iconSource);
                 if (icon is not null)
                 {
                     pb.Image = new Bitmap(icon.ToBitmap(), new Size(28, 28));
@@ -381,6 +388,32 @@ public sealed class BarForm : Form
         }
     }
 
+    private static string? ResolveShortcutTarget(string lnkPath)
+    {
+        if (!Path.GetExtension(lnkPath).Equals(".lnk", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        try
+        {
+            var shellType = Type.GetTypeFromProgID("WScript.Shell");
+            if (shellType is null)
+            {
+                return null;
+            }
+
+            dynamic shell = Activator.CreateInstance(shellType)!;
+            var lnk = shell.CreateShortcut(lnkPath);
+            string target = lnk.TargetPath;
+            return string.IsNullOrWhiteSpace(target) || !File.Exists(target) ? null : target;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static void CreateLnk(string lnkPath, string target)
     {
         var shellType = Type.GetTypeFromProgID("WScript.Shell");
@@ -422,6 +455,22 @@ public sealed class BarForm : Form
         catch
         {
             // avvio fallito: ignora
+        }
+    }
+
+    private void OpenShop3D()
+    {
+        try
+        {
+            new Shop3DWindow().Show();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                "Impossibile aprire la Vista 3D Game:\n" + ex.Message,
+                "DesktopPager3D-OS",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
         }
     }
 

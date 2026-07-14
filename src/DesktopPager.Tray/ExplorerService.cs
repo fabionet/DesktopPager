@@ -35,9 +35,11 @@ public static class ExplorerService
 
             if (Process.GetProcessesByName("explorer").Length == 0)
             {
+                var explorer = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
                 Process.Start(new ProcessStartInfo
                 {
-                    FileName = "explorer.exe",
+                    FileName = explorer,
                     UseShellExecute = true
                 });
             }

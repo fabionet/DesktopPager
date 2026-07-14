@@ -61,7 +61,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             {
                 MessageBox.Show(
                     "Impossibile aggiornare l'impostazione di avvio automatico.",
-                    "DesktopPager",
+                    "DesktopPager3D-OS",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
             }
@@ -74,7 +74,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             Icon = ResolveIcon(),
             Visible = true,
-            Text = "DesktopPager",
+            Text = "DesktopPager3D-OS",
             ContextMenuStrip = trayMenu
         };
         UpdateTooltip();
@@ -82,7 +82,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             _notifyIcon.ShowBalloonTip(
                 5000,
-                "DesktopPager",
+                "DesktopPager3D-OS",
                 "Impossibile registrare una o più hotkey globali. Verifica conflitti con altre applicazioni.",
                 ToolTipIcon.Warning);
         }
@@ -120,7 +120,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             _notifyIcon.ShowBalloonTip(
                 4000,
-                "DesktopPager",
+                "DesktopPager3D-OS",
                 "Rotazione non riuscita: il driver video potrebbe non supportarla.",
                 ToolTipIcon.Warning);
         }
@@ -132,7 +132,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             MessageBox.Show(
                 "Impossibile riavviare Explorer.",
-                "DesktopPager",
+                "DesktopPager3D-OS",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
         }
@@ -143,7 +143,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private void UpdateTooltip()
     {
-        _notifyIcon.Text = $"DesktopPager - Pagina {_pageManager.CurrentPage}/{_pageManager.TotalPages}";
+        _notifyIcon.Text = $"DesktopPager3D-OS - Pagina {_pageManager.CurrentPage}/{_pageManager.TotalPages}";
     }
 
     private sealed class HotkeyWindow : NativeWindow, IDisposable
