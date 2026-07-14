@@ -17,6 +17,7 @@ Hotkey globali:
 - `Ctrl+Alt+PgGiu` — pagina avanti
 - `Ctrl+Alt+PgSu` — pagina indietro
 - `Ctrl+Alt+Home` — prima pagina
+- `Ctrl+Alt+Fine` — riavvia Explorer (disponibile anche dal menu della tray)
 
 ## Istruzioni Git del progetto
 Flusso consigliato per lavorare sul repository abionet/DesktopPager.
@@ -45,4 +46,4 @@ Eseguibile: build-cpp\src\DesktopPager.NativeCpp\Release\DesktopPagerNative.exe
 Build alternativa (MinGW/w64devkit):
 cmake -S . -B build-cpp -G "MinGW Makefiles"
 cmake --build build-cpp
-Hotkey: Ctrl+Alt+PgGiu, Ctrl+Alt+PgSu, Ctrl+Alt+Home.
+Hotkey: Ctrl+Alt+PgGiu, Ctrl+Alt+PgSu, Ctrl+Alt+Home, Ctrl+Alt+Fine (riavvia Explorer).

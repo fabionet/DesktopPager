@@ -2,6 +2,7 @@
 #include <commctrl.h>
 #include <shellapi.h>
 #include <strsafe.h>
+#include <tlhelp32.h>
 #include <algorithm>
 #include <string>
 #include <cstdio>
@@ -27,6 +28,7 @@ constexpr UINT WM_TRAYICON = WM_APP + 1;
 constexpr int HOTKEY_NEXT = 1;
 constexpr int HOTKEY_PREV = 2;
 constexpr int HOTKEY_HOME = 3;
+constexpr int HOTKEY_RESTART_EXPLORER = 4;
 
 constexpr UINT MODIFIERS = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
 
@@ -35,6 +37,7 @@ constexpr UINT IDM_PREV = 1002;
 constexpr UINT IDM_HOME = 1003;
 constexpr UINT IDM_AUTOSTART = 1004;
 constexpr UINT IDM_EXIT = 1005;
+constexpr UINT IDM_RESTART_EXPLORER = 1006;
 
 constexpr UINT LVM_SCROLL_MSG = LVM_FIRST + 20;
 constexpr UINT LVM_GETITEMSPACING_MSG = LVM_FIRST + 51;
@@ -60,6 +63,7 @@ struct AppState
     int totalPages = 1;
 
     bool autostartEnabled = false;
+    UINT taskbarCreatedMessage = 0;
 };
 
 AppState g_state;
@@ -386,6 +390,68 @@ void GoToPreviousPage(AppState& state)
     RefreshPageState(state, listView);
 }
 
+void RestartExplorer(AppState& state)
+{
+    Log(L"RestartExplorer: requested.");
+
+    // chiudi tutte le istanze di explorer.exe
+    const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot != INVALID_HANDLE_VALUE)
+    {
+        PROCESSENTRY32W entry{};
+        entry.dwSize = sizeof(entry);
+        if (Process32FirstW(snapshot, &entry))
+        {
+            do
+            {
+                if (_wcsicmp(entry.szExeFile, L"explorer.exe") == 0)
+                {
+                    const auto process = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, entry.th32ProcessID);
+                    if (process != nullptr)
+                    {
+                        TerminateProcess(process, 0);
+                        WaitForSingleObject(process, 5000);
+                        CloseHandle(process);
+                    }
+                }
+            } while (Process32NextW(snapshot, &entry));
+        }
+        CloseHandle(snapshot);
+    }
+
+    // Winlogon di solito rilancia la shell da solo: dagli un momento.
+    Sleep(1500);
+
+    bool running = false;
+    const auto check = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (check != INVALID_HANDLE_VALUE)
+    {
+        PROCESSENTRY32W entry{};
+        entry.dwSize = sizeof(entry);
+        if (Process32FirstW(check, &entry))
+        {
+            do
+            {
+                if (_wcsicmp(entry.szExeFile, L"explorer.exe") == 0)
+                {
+                    running = true;
+                    break;
+                }
+            } while (Process32NextW(check, &entry));
+        }
+        CloseHandle(check);
+    }
+
+    if (!running)
+    {
+        ShellExecuteW(nullptr, L"open", L"explorer.exe", nullptr, nullptr, SW_SHOWNORMAL);
+    }
+
+    state.currentPage = 1;
+    state.totalPages = 1;
+    Log(L"RestartExplorer: done.");
+}
+
 bool IsAutostartEnabled()
 {
     HKEY key{};
@@ -444,6 +510,8 @@ void ShowContextMenu(HWND hwnd)
     AppendMenuW(menu, MF_STRING, IDM_NEXT, L"Pagina avanti\tCtrl+Alt+PgGiu");
     AppendMenuW(menu, MF_STRING, IDM_PREV, L"Pagina indietro\tCtrl+Alt+PgSu");
     AppendMenuW(menu, MF_STRING, IDM_HOME, L"Prima pagina\tCtrl+Alt+Home");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, IDM_RESTART_EXPLORER, L"Riavvia Explorer\tCtrl+Alt+Fine");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (g_state.autostartEnabled ? MF_CHECKED : MF_UNCHECKED), IDM_AUTOSTART, L"Avvio automatico con Windows");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -505,6 +573,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             g_state.icon = LoadIconW(nullptr, IDI_APPLICATION);
         }
 
+        g_state.taskbarCreatedMessage = RegisterWindowMessageW(L"TaskbarCreated");
         InitTrayIcon(hwnd);
         g_state.autostartEnabled = IsAutostartEnabled();
         UpdateTrayTooltip(g_state);
@@ -512,7 +581,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         const bool h1 = RegisterHotKey(hwnd, HOTKEY_NEXT, MODIFIERS, VK_NEXT) != 0;
         const bool h2 = RegisterHotKey(hwnd, HOTKEY_PREV, MODIFIERS, VK_PRIOR) != 0;
         const bool h3 = RegisterHotKey(hwnd, HOTKEY_HOME, MODIFIERS, VK_HOME) != 0;
-        if (!(h1 && h2 && h3))
+        const bool h4 = RegisterHotKey(hwnd, HOTKEY_RESTART_EXPLORER, MODIFIERS, VK_END) != 0;
+        if (!(h1 && h2 && h3 && h4))
         {
             MessageBoxW(hwnd, L"Impossibile registrare una o più hotkey globali.", APP_NAME, MB_ICONWARNING | MB_OK);
             Log(L"WM_CREATE: one or more hotkeys could not be registered.");
@@ -531,6 +601,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         case HOTKEY_HOME:
             GoToFirstPage(g_state);
             break;
+        case HOTKEY_RESTART_EXPLORER:
+            RestartExplorer(g_state);
+            break;
         default:
             break;
         }
@@ -546,6 +619,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             break;
         case IDM_HOME:
             GoToFirstPage(g_state);
+            break;
+        case IDM_RESTART_EXPLORER:
+            RestartExplorer(g_state);
             break;
         case IDM_AUTOSTART:
         {
@@ -578,10 +654,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         UnregisterHotKey(hwnd, HOTKEY_NEXT);
         UnregisterHotKey(hwnd, HOTKEY_PREV);
         UnregisterHotKey(hwnd, HOTKEY_HOME);
+        UnregisterHotKey(hwnd, HOTKEY_RESTART_EXPLORER);
         Cleanup();
         PostQuitMessage(0);
         return 0;
     default:
+        // Explorer riavviato: la taskbar e' nuova, la tray icon va ricreata
+        if (message == g_state.taskbarCreatedMessage && g_state.taskbarCreatedMessage != 0)
+        {
+            Shell_NotifyIconW(NIM_ADD, &g_state.nid);
+            UpdateTrayTooltip(g_state);
+            return 0;
+        }
         return DefWindowProcW(hwnd, message, wParam, lParam);
     }
 }

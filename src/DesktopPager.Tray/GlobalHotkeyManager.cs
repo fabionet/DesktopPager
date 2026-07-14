@@ -12,6 +12,7 @@ public sealed class GlobalHotkeyManager : IDisposable
     private const int HotkeyNextPage = 1;
     private const int HotkeyPreviousPage = 2;
     private const int HotkeyMainPage = 3;
+    private const int HotkeyRestartExplorer = 4;
 
     private IntPtr _windowHandle;
 
@@ -23,24 +24,32 @@ public sealed class GlobalHotkeyManager : IDisposable
         var nextOk = NativeDesktopApi.RegisterHotKey(_windowHandle, HotkeyNextPage, modifiers, (int)Keys.PageDown);
         var previousOk = NativeDesktopApi.RegisterHotKey(_windowHandle, HotkeyPreviousPage, modifiers, (int)Keys.PageUp);
         var mainOk = NativeDesktopApi.RegisterHotKey(_windowHandle, HotkeyMainPage, modifiers, (int)Keys.Home);
+        var restartOk = NativeDesktopApi.RegisterHotKey(_windowHandle, HotkeyRestartExplorer, modifiers, (int)Keys.End);
 
-        return nextOk && previousOk && mainOk;
+        return nextOk && previousOk && mainOk && restartOk;
     }
 
-    public bool HandleMessage(Message m, DesktopPageManager pageManager)
+    public bool HandleMessage(Message m, DesktopPageManager pageManager, Action restartExplorer)
     {
         if (m.Msg != WmHotkey)
         {
             return false;
         }
 
-        return m.WParam.ToInt32() switch
+        switch (m.WParam.ToInt32())
         {
-            HotkeyNextPage => pageManager.NextPage(),
-            HotkeyPreviousPage => pageManager.PreviousPage(),
-            HotkeyMainPage => pageManager.GoToMainPage(),
-            _ => false
-        };
+            case HotkeyNextPage:
+                return pageManager.NextPage();
+            case HotkeyPreviousPage:
+                return pageManager.PreviousPage();
+            case HotkeyMainPage:
+                return pageManager.GoToMainPage();
+            case HotkeyRestartExplorer:
+                restartExplorer();
+                return true;
+            default:
+                return false;
+        }
     }
 
     public void Dispose()
@@ -53,5 +62,6 @@ public sealed class GlobalHotkeyManager : IDisposable
         NativeDesktopApi.UnregisterHotKey(_windowHandle, HotkeyNextPage);
         NativeDesktopApi.UnregisterHotKey(_windowHandle, HotkeyPreviousPage);
         NativeDesktopApi.UnregisterHotKey(_windowHandle, HotkeyMainPage);
+        NativeDesktopApi.UnregisterHotKey(_windowHandle, HotkeyRestartExplorer);
     }
 }
