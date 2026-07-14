@@ -19,6 +19,13 @@ Hotkey globali:
 - `Ctrl+Alt+Home` — prima pagina
 - `Ctrl+Alt+Fine` — riavvia Explorer (disponibile anche dal menu della tray)
 
+Rotazione dello schermo (come le hotkey dei driver Intel):
+- `Ctrl+Alt+Su` — schermo sottosopra (180°)
+- `Ctrl+Alt+Giu` — torna normale
+- `Ctrl+Alt+Sinistra` — ruota con la barra sul lato sinistro (90°)
+- `Ctrl+Alt+Destra` — ruota con la barra sul lato destro (270°)
+- `Ctrl+Alt+Shift+^` — emergenza: riporta tutto come prima
+
 ## Istruzioni Git del progetto
 Flusso consigliato per lavorare sul repository abionet/DesktopPager.
 

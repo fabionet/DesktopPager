@@ -19,14 +19,22 @@ public sealed class TrayApplicationContext : ApplicationContext
         _autostartService = new AutostartService();
 
         _hotkeyManager = new GlobalHotkeyManager();
-        _window = new HotkeyWindow(_hotkeyManager, _pageManager, UpdateTooltip, RestartExplorer);
+        _window = new HotkeyWindow(_hotkeyManager, _pageManager, UpdateTooltip, RestartExplorer, RotateScreen);
         var hotkeysRegistered = _hotkeyManager.Register(_window.Handle);
 
         var trayMenu = new ContextMenuStrip();
         trayMenu.Items.Add("Pagina avanti (Ctrl+Alt+PgGiù)", null, (_, _) => ChangePage(_pageManager.NextPage));
         trayMenu.Items.Add("Pagina indietro (Ctrl+Alt+PgSu)", null, (_, _) => ChangePage(_pageManager.PreviousPage));
         trayMenu.Items.Add("Prima pagina (Ctrl+Alt+Home)", null, (_, _) => ChangePage(_pageManager.GoToMainPage));
+        var rotateMenu = new ToolStripMenuItem("Ruota schermo");
+        rotateMenu.DropDownItems.Add("Sottosopra (Ctrl+Alt+Su)", null, (_, _) => RotateScreen(ScreenRotationService.Orientation180));
+        rotateMenu.DropDownItems.Add("Normale (Ctrl+Alt+Giù)", null, (_, _) => RotateScreen(ScreenRotationService.OrientationDefault));
+        rotateMenu.DropDownItems.Add("Barra a sinistra (Ctrl+Alt+Sinistra)", null, (_, _) => RotateScreen(ScreenRotationService.Orientation90));
+        rotateMenu.DropDownItems.Add("Barra a destra (Ctrl+Alt+Destra)", null, (_, _) => RotateScreen(ScreenRotationService.Orientation270));
+        rotateMenu.DropDownItems.Add(new ToolStripSeparator());
+        rotateMenu.DropDownItems.Add("Emergenza: ripristina (Ctrl+Alt+Shift+^)", null, (_, _) => RotateScreen(ScreenRotationService.OrientationDefault));
         trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add(rotateMenu);
         trayMenu.Items.Add("Riavvia Explorer (Ctrl+Alt+Fine)", null, (_, _) => RestartExplorer());
         var autostartItem = new ToolStripMenuItem("Avvio automatico con Windows")
         {
@@ -94,6 +102,18 @@ public sealed class TrayApplicationContext : ApplicationContext
         return ok;
     }
 
+    private void RotateScreen(int orientation)
+    {
+        if (!ScreenRotationService.Rotate(orientation))
+        {
+            _notifyIcon.ShowBalloonTip(
+                4000,
+                "DesktopPager",
+                "Rotazione non riuscita: il driver video potrebbe non supportarla.",
+                ToolTipIcon.Warning);
+        }
+    }
+
     private void RestartExplorer()
     {
         if (!ExplorerService.Restart())
@@ -120,19 +140,21 @@ public sealed class TrayApplicationContext : ApplicationContext
         private readonly DesktopPageManager _pageManager;
         private readonly Action _onPageChanged;
         private readonly Action _restartExplorer;
+        private readonly Action<int> _rotateScreen;
 
-        public HotkeyWindow(GlobalHotkeyManager hotkeyManager, DesktopPageManager pageManager, Action onPageChanged, Action restartExplorer)
+        public HotkeyWindow(GlobalHotkeyManager hotkeyManager, DesktopPageManager pageManager, Action onPageChanged, Action restartExplorer, Action<int> rotateScreen)
         {
             _hotkeyManager = hotkeyManager;
             _pageManager = pageManager;
             _onPageChanged = onPageChanged;
             _restartExplorer = restartExplorer;
+            _rotateScreen = rotateScreen;
             CreateHandle(new CreateParams());
         }
 
         protected override void WndProc(ref Message m)
         {
-            if (_hotkeyManager.HandleMessage(m, _pageManager, _restartExplorer))
+            if (_hotkeyManager.HandleMessage(m, _pageManager, _restartExplorer, _rotateScreen))
             {
                 _onPageChanged();
             }

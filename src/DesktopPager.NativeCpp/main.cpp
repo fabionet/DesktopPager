@@ -29,6 +29,11 @@ constexpr int HOTKEY_NEXT = 1;
 constexpr int HOTKEY_PREV = 2;
 constexpr int HOTKEY_HOME = 3;
 constexpr int HOTKEY_RESTART_EXPLORER = 4;
+constexpr int HOTKEY_FLIP_SCREEN = 5;     // Ctrl+Alt+Su: sottosopra
+constexpr int HOTKEY_RESET_SCREEN = 6;    // Ctrl+Alt+Giu: normale
+constexpr int HOTKEY_ROTATE_LEFT = 7;     // Ctrl+Alt+Sinistra
+constexpr int HOTKEY_ROTATE_RIGHT = 8;    // Ctrl+Alt+Destra
+constexpr int HOTKEY_PANIC_RESET = 9;     // Ctrl+Alt+Shift+^: emergenza
 
 constexpr UINT MODIFIERS = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
 
@@ -38,6 +43,10 @@ constexpr UINT IDM_HOME = 1003;
 constexpr UINT IDM_AUTOSTART = 1004;
 constexpr UINT IDM_EXIT = 1005;
 constexpr UINT IDM_RESTART_EXPLORER = 1006;
+constexpr UINT IDM_ROTATE_180 = 1007;
+constexpr UINT IDM_ROTATE_0 = 1008;
+constexpr UINT IDM_ROTATE_90 = 1009;
+constexpr UINT IDM_ROTATE_270 = 1010;
 
 constexpr UINT LVM_SCROLL_MSG = LVM_FIRST + 20;
 constexpr UINT LVM_GETITEMSPACING_MSG = LVM_FIRST + 51;
@@ -390,6 +399,50 @@ void GoToPreviousPage(AppState& state)
     RefreshPageState(state, listView);
 }
 
+// Ruota lo schermo principale (DMDO_DEFAULT/90/180/270), come le
+// hotkey dei driver video Intel.
+bool RotateScreen(int orientation)
+{
+    if (orientation < DMDO_DEFAULT || orientation > DMDO_270)
+    {
+        return false;
+    }
+
+    DEVMODEW dm{};
+    dm.dmSize = sizeof(dm);
+    if (!EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &dm))
+    {
+        return false;
+    }
+
+    if (static_cast<int>(dm.dmDisplayOrientation) == orientation)
+    {
+        return true;
+    }
+
+    // passando tra orizzontale e verticale vanno scambiate le dimensioni
+    if (((dm.dmDisplayOrientation + orientation) & 1) == 1)
+    {
+        std::swap(dm.dmPelsWidth, dm.dmPelsHeight);
+    }
+
+    dm.dmDisplayOrientation = orientation;
+    const auto result = ChangeDisplaySettingsW(&dm, 0);
+    if (result != DISP_CHANGE_SUCCESSFUL)
+    {
+        Log(L"RotateScreen: ChangeDisplaySettings failed.");
+        return false;
+    }
+    return true;
+}
+
+// Tasto del carattere '^' nel layout corrente (italiana: Shift+ì, 0xDD)
+UINT GetCaretVirtualKey()
+{
+    const SHORT scan = VkKeyScanW(L'^');
+    return scan == -1 ? 0xDD : static_cast<UINT>(scan & 0xFF);
+}
+
 void RestartExplorer(AppState& state)
 {
     Log(L"RestartExplorer: requested.");
@@ -511,6 +564,14 @@ void ShowContextMenu(HWND hwnd)
     AppendMenuW(menu, MF_STRING, IDM_PREV, L"Pagina indietro\tCtrl+Alt+PgSu");
     AppendMenuW(menu, MF_STRING, IDM_HOME, L"Prima pagina\tCtrl+Alt+Home");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    HMENU rotateMenu = CreatePopupMenu();
+    AppendMenuW(rotateMenu, MF_STRING, IDM_ROTATE_180, L"Sottosopra\tCtrl+Alt+Su");
+    AppendMenuW(rotateMenu, MF_STRING, IDM_ROTATE_0, L"Normale\tCtrl+Alt+Giu");
+    AppendMenuW(rotateMenu, MF_STRING, IDM_ROTATE_90, L"Barra a sinistra\tCtrl+Alt+Sinistra");
+    AppendMenuW(rotateMenu, MF_STRING, IDM_ROTATE_270, L"Barra a destra\tCtrl+Alt+Destra");
+    AppendMenuW(rotateMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(rotateMenu, MF_STRING, IDM_ROTATE_0, L"Emergenza: ripristina\tCtrl+Alt+Shift+^");
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(rotateMenu), L"Ruota schermo");
     AppendMenuW(menu, MF_STRING, IDM_RESTART_EXPLORER, L"Riavvia Explorer\tCtrl+Alt+Fine");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (g_state.autostartEnabled ? MF_CHECKED : MF_UNCHECKED), IDM_AUTOSTART, L"Avvio automatico con Windows");
@@ -582,7 +643,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         const bool h2 = RegisterHotKey(hwnd, HOTKEY_PREV, MODIFIERS, VK_PRIOR) != 0;
         const bool h3 = RegisterHotKey(hwnd, HOTKEY_HOME, MODIFIERS, VK_HOME) != 0;
         const bool h4 = RegisterHotKey(hwnd, HOTKEY_RESTART_EXPLORER, MODIFIERS, VK_END) != 0;
-        if (!(h1 && h2 && h3 && h4))
+        const bool h5 = RegisterHotKey(hwnd, HOTKEY_FLIP_SCREEN, MODIFIERS, VK_UP) != 0;
+        const bool h6 = RegisterHotKey(hwnd, HOTKEY_RESET_SCREEN, MODIFIERS, VK_DOWN) != 0;
+        const bool h7 = RegisterHotKey(hwnd, HOTKEY_ROTATE_LEFT, MODIFIERS, VK_LEFT) != 0;
+        const bool h8 = RegisterHotKey(hwnd, HOTKEY_ROTATE_RIGHT, MODIFIERS, VK_RIGHT) != 0;
+        const bool h9 = RegisterHotKey(hwnd, HOTKEY_PANIC_RESET, MODIFIERS | MOD_SHIFT, GetCaretVirtualKey()) != 0;
+        if (!(h1 && h2 && h3 && h4 && h5 && h6 && h7 && h8 && h9))
         {
             MessageBoxW(hwnd, L"Impossibile registrare una o più hotkey globali.", APP_NAME, MB_ICONWARNING | MB_OK);
             Log(L"WM_CREATE: one or more hotkeys could not be registered.");
@@ -604,6 +670,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         case HOTKEY_RESTART_EXPLORER:
             RestartExplorer(g_state);
             break;
+        case HOTKEY_FLIP_SCREEN:
+            RotateScreen(DMDO_180);
+            break;
+        case HOTKEY_RESET_SCREEN:
+        case HOTKEY_PANIC_RESET:
+            RotateScreen(DMDO_DEFAULT);
+            break;
+        case HOTKEY_ROTATE_LEFT:
+            RotateScreen(DMDO_90);
+            break;
+        case HOTKEY_ROTATE_RIGHT:
+            RotateScreen(DMDO_270);
+            break;
         default:
             break;
         }
@@ -622,6 +701,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             break;
         case IDM_RESTART_EXPLORER:
             RestartExplorer(g_state);
+            break;
+        case IDM_ROTATE_180:
+            RotateScreen(DMDO_180);
+            break;
+        case IDM_ROTATE_0:
+            RotateScreen(DMDO_DEFAULT);
+            break;
+        case IDM_ROTATE_90:
+            RotateScreen(DMDO_90);
+            break;
+        case IDM_ROTATE_270:
+            RotateScreen(DMDO_270);
             break;
         case IDM_AUTOSTART:
         {
@@ -654,6 +745,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         UnregisterHotKey(hwnd, HOTKEY_NEXT);
         UnregisterHotKey(hwnd, HOTKEY_PREV);
         UnregisterHotKey(hwnd, HOTKEY_HOME);
+        for (int id = HOTKEY_RESTART_EXPLORER + 1; id <= HOTKEY_PANIC_RESET; ++id)
+        {
+            UnregisterHotKey(hwnd, id);
+        }
         UnregisterHotKey(hwnd, HOTKEY_RESTART_EXPLORER);
         Cleanup();
         PostQuitMessage(0);
