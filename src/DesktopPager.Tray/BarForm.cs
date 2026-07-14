@@ -442,7 +442,11 @@ public sealed class BarForm : Form
         }
         _quickItems.Clear();
 
-        foreach (var file in Directory.EnumerateFiles(QuickLaunchFolder).OrderBy(f => f).Take(24))
+        foreach (var file in Directory.EnumerateFiles(QuickLaunchFolder)
+                     .Where(f => f.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)
+                                 || f.EndsWith(".url", StringComparison.OrdinalIgnoreCase)
+                                 || f.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                     .OrderBy(f => f).Take(24))
         {
             var pb = new FlatIconButton
             {
@@ -611,19 +615,29 @@ public sealed class BarForm : Form
 
     private void SeedDefaultShortcuts()
     {
-        if (Directory.EnumerateFileSystemEntries(QuickLaunchFolder).Any())
+        // semina i predefiniti SOLO al primo avvio: dopo, la scelta dell'utente
+        // (anche una barra senza collegamenti) resta memorizzata di volta in volta.
+        // Il marker sta nella cartella genitore (non in QuickLaunch, altrimenti
+        // verrebbe mostrato come un avvio rapido).
+        var marker = Path.Combine(Path.GetDirectoryName(QuickLaunchFolder.TrimEnd('\\'))!, ".quicklaunch-seeded");
+        if (File.Exists(marker))
         {
             return;
         }
 
-        var win = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-        foreach (var exe in new[] { Path.Combine(win, "explorer.exe"), Path.Combine(win, "notepad.exe") })
+        if (!Directory.EnumerateFileSystemEntries(QuickLaunchFolder).Any())
         {
-            if (File.Exists(exe))
+            var win = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            foreach (var exe in new[] { Path.Combine(win, "explorer.exe"), Path.Combine(win, "notepad.exe") })
             {
-                AddShortcut(exe);
+                if (File.Exists(exe))
+                {
+                    AddShortcut(exe);
+                }
             }
         }
+
+        try { File.WriteAllText(marker, ""); } catch { /* ignora */ }
     }
 
     private static void Launch(string file)
