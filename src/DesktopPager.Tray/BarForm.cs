@@ -526,81 +526,55 @@ public sealed class BarForm : Form
 
     private void ShowStartMenu()
     {
-        var sys = Environment.GetFolderPath(Environment.SpecialFolder.System);
-        var win = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-        string Sys(string f) => Path.Combine(sys, f);
-        var powershell = Path.Combine(sys, "WindowsPowerShell", "v1.0", "powershell.exe");
+        try
+        {
+            ShowStartMenuCore();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Errore menu Start:\n" + ex, "DesktopPager3D-OS");
+        }
+    }
 
-        var menu = new ContextMenuStrip();
+    private void ShowStartMenuCore()
+    {
+        // menu Start in stile Windows con le applicazioni installate per categoria
+        var menu = new StartMenuForm();
 
-        // Programmi di sistema
-        var progs = new ToolStripMenuItem("Programmi di sistema");
-        progs.DropDownItems.Add("Esplora file", null, (_, _) => Launch(Path.Combine(win, "explorer.exe")));
-        progs.DropDownItems.Add("Prompt dei comandi", null, (_, _) => Launch(Sys("cmd.exe")));
-        progs.DropDownItems.Add("Windows PowerShell", null, (_, _) => Launch(powershell));
-        progs.DropDownItems.Add("Blocco note", null, (_, _) => Launch(Sys("notepad.exe")));
-        progs.DropDownItems.Add("Calcolatrice", null, (_, _) => Launch(Sys("calc.exe")));
-        progs.DropDownItems.Add("Paint", null, (_, _) => Launch(Sys("mspaint.exe")));
-        progs.DropDownItems.Add("Mappa caratteri", null, (_, _) => Launch(Sys("charmap.exe")));
-        progs.DropDownItems.Add("Editor del Registro", null, (_, _) => Launch(Path.Combine(win, "regedit.exe")));
-        progs.DropDownItems.Add("Informazioni di sistema", null, (_, _) => Launch(Sys("msinfo32.exe")));
-        progs.DropDownItems.Add("Configurazione di sistema", null, (_, _) => Launch(Sys("msconfig.exe")));
-
-        // Strumenti di amministrazione
-        var admin = new ToolStripMenuItem("Strumenti di amministrazione");
-        admin.DropDownItems.Add("Gestione computer", null, (_, _) => Launch(Sys("compmgmt.msc")));
-        admin.DropDownItems.Add("Gestione dispositivi", null, (_, _) => Launch(Sys("devmgmt.msc")));
-        admin.DropDownItems.Add("Gestione disco", null, (_, _) => Launch(Sys("diskmgmt.msc")));
-        admin.DropDownItems.Add("Servizi", null, (_, _) => Launch(Sys("services.msc")));
-        admin.DropDownItems.Add("Visualizzatore eventi", null, (_, _) => Launch(Sys("eventvwr.msc")));
-        admin.DropDownItems.Add("Utilità di pianificazione", null, (_, _) => Launch(Sys("taskschd.msc")));
-        admin.DropDownItems.Add("Gestione attività", null, (_, _) => Launch(Sys("taskmgr.exe")));
-
-        // Impostazioni (Pannello di controllo vecchio stile)
-        var settings = new ToolStripMenuItem("Impostazioni (Pannello di controllo)");
-        settings.DropDownItems.Add("Pannello di controllo", null, (_, _) => Launch(Sys("control.exe")));
-        settings.DropDownItems.Add(new ToolStripSeparator());
-        void Cpl(string title, string cpl) =>
-            settings.DropDownItems.Add(title, null, (_, _) => LaunchControl(cpl));
-        Cpl("Programmi e funzionalità", "appwiz.cpl");
-        Cpl("Connessioni di rete", "ncpa.cpl");
-        Cpl("Opzioni risparmio energia", "powercfg.cpl");
-        Cpl("Schermo", "desk.cpl");
-        Cpl("Audio", "mmsys.cpl");
-        Cpl("Data e ora", "timedate.cpl");
-        Cpl("Mouse", "main.cpl");
-        Cpl("Sistema", "sysdm.cpl");
-        Cpl("Windows Defender Firewall", "firewall.cpl");
-        Cpl("Paese e lingua", "intl.cpl");
-        settings.DropDownItems.Add("Account utente", null, (_, _) => Launch(Sys("netplwiz.exe")));
-
-        menu.Items.Add(progs);
-        menu.Items.Add(admin);
-        menu.Items.Add(settings);
+        // posiziona la finestra vicino alla moneta, dentro lo schermo
+        var coinScreen = _start.PointToScreen(Point.Empty);
+        var wa = Screen.PrimaryScreen!.WorkingArea;
+        int x, y;
+        if (_side == Side.Top)
+        {
+            x = coinScreen.X + _start.Width / 2 - menu.Width / 2;
+            y = Bounds.Bottom;
+        }
+        else if (_side == Side.Left)
+        {
+            x = Bounds.Right;
+            y = coinScreen.Y - menu.Height / 2;
+        }
+        else
+        {
+            x = Bounds.Left - menu.Width;
+            y = coinScreen.Y - menu.Height / 2;
+        }
+        x = Math.Clamp(x, wa.Left, wa.Right - menu.Width);
+        y = Math.Clamp(y, wa.Top, wa.Bottom - menu.Height);
+        menu.Location = new Point(x, y);
 
         _pinned++;
-        menu.Closed += (_, _) => _pinned--;
-        // attiva la barra (tool-window) così il menu resta aperto, e àncoralo alla moneta
+        menu.FormClosed += (_, _) => _pinned--;
         SetForegroundWindow(Handle);
         Activate();
-        menu.Show(_start, new Point(_start.Width / 2, _start.Height));
+        menu.Show();
+        SetForegroundWindow(menu.Handle);
+        menu.Activate();
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
-
-    private static void LaunchControl(string cpl)
-    {
-        try
-        {
-            var control = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "control.exe");
-            Process.Start(new ProcessStartInfo { FileName = control, Arguments = cpl, UseShellExecute = true });
-        }
-        catch
-        {
-            // avvio fallito: ignora
-        }
-    }
 
     private void OpenShop3D()
     {
