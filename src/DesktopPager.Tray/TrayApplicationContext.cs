@@ -37,7 +37,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _bar = new BarForm { Effects = _effects };
         _bar.Show();
 
-        var trayMenu = new ContextMenuStrip();
+        var trayMenu = BarMenuStyle.New();
         var barItem = new ToolStripMenuItem("Barra a scomparsa") { Checked = true, CheckOnClick = true };
         barItem.CheckedChanged += (_, _) => { if (barItem.Checked) _bar.Show(); else _bar.Hide(); };
         trayMenu.Items.Add(barItem);

@@ -186,7 +186,7 @@ public sealed class BarForm : Form
 
     public void ShowBarMenu()
     {
-        var m = new ContextMenuStrip();
+        var m = BarMenuStyle.New();
         var repl = new ToolStripMenuItem("Sostituisci la barra di Windows")
         {
             Checked = _replaceTaskbar,
@@ -287,8 +287,10 @@ public sealed class BarForm : Form
         _expanded = true;
         ApplyTheme();
         Bounds = EdgeBounds();
-        LayoutControls();
         foreach (Control c in Controls) c.Visible = true;
+        // dopo il "mostra tutto": è LayoutControls a decidere frecce e
+        // traboccamento degli avvii rapidi oltre la moneta
+        LayoutControls();
         UpdateStats();
         Invalidate();
     }
@@ -334,16 +336,36 @@ public sealed class BarForm : Form
         var horizontal = _side is Side.Top or Side.Bottom;
         UpdateMoveGlyphs();
 
-        var head = new List<Control> { _moveA };
-        var tail = new List<Control> { _explorer, _ps, _cmd, _flow, _game, _tray, _apps, _power, _perf, _net, _clock, _moveB };
+        // In sostituzione della barra di Windows la posizione è fissa (in basso):
+        // le frecce di spostamento non servono e lo spazio ai lati va agli avvii
+        // rapidi e ai tasti di destra.
+        var arrows = !_replaceTaskbar;
+        _moveA.Visible = arrows;
+        _moveB.Visible = arrows;
+
+        var head = new List<Control>();
+        if (arrows) head.Add(_moveA);
+        var tail = new List<Control> { _explorer, _ps, _cmd, _flow, _game, _tray, _apps, _power, _perf, _net, _clock };
+        if (arrows) tail.Add(_moveB);
         var middle = new List<Control>(_quickItems) { _add };
 
-        var pad = 5;
+        const int pad = 5;
         if (horizontal)
         {
+            // la moneta resta al centro: è il limite oltre cui gli avvii rapidi
+            // non possono andare
+            _start.Location = new Point((Width - _start.Width) / 2, (Thickness - _start.Height) / 2);
+            var limit = _start.Location.X - pad;
+
             var x = pad;
             foreach (var c in head) { c.Location = new Point(x, (Thickness - c.Height) / 2); x += c.Width + pad; }
-            foreach (var c in middle) { c.Location = new Point(x, (Thickness - c.Height) / 2); x += c.Width + pad; }
+            foreach (var c in middle)
+            {
+                if (x + c.Width > limit) { c.Visible = false; continue; } // barra piena
+                c.Location = new Point(x, (Thickness - c.Height) / 2);
+                x += c.Width + pad;
+            }
+
             var xr = Width - pad;
             for (var i = tail.Count - 1; i >= 0; i--)
             {
@@ -351,14 +373,21 @@ public sealed class BarForm : Form
                 tail[i].Location = new Point(xr, (Thickness - tail[i].Height) / 2);
                 xr -= pad;
             }
-            // moneta Windows al centro della barra
-            _start.Location = new Point((Width - _start.Width) / 2, (Thickness - _start.Height) / 2);
         }
         else
         {
+            _start.Location = new Point((Thickness - _start.Width) / 2, (Height - _start.Height) / 2);
+            var limit = _start.Location.Y - pad;
+
             var y = pad;
             foreach (var c in head) { c.Location = new Point((Thickness - c.Width) / 2, y); y += c.Height + pad; }
-            foreach (var c in middle) { c.Location = new Point((Thickness - c.Width) / 2, y); y += c.Height + pad; }
+            foreach (var c in middle)
+            {
+                if (y + c.Height > limit) { c.Visible = false; continue; }
+                c.Location = new Point((Thickness - c.Width) / 2, y);
+                y += c.Height + pad;
+            }
+
             var yb = Height - pad;
             for (var i = tail.Count - 1; i >= 0; i--)
             {
@@ -366,8 +395,30 @@ public sealed class BarForm : Form
                 tail[i].Location = new Point((Thickness - tail[i].Width) / 2, yb);
                 yb -= pad;
             }
-            _start.Location = new Point((Thickness - _start.Width) / 2, (Height - _start.Height) / 2);
         }
+    }
+
+    /// <summary>C'è ancora posto per un altro avvio rapido prima della moneta?</summary>
+    private bool HasRoomForQuickItem()
+    {
+        var horizontal = _side is Side.Top or Side.Bottom;
+        const int pad = 5;
+        var used = pad;
+        if (!_replaceTaskbar)
+        {
+            used += (horizontal ? _moveA.Width : _moveA.Height) + pad;
+        }
+        foreach (var c in _quickItems)
+        {
+            used += (horizontal ? c.Width : c.Height) + pad;
+        }
+
+        // servono lo spazio per la nuova icona e per il tasto "+"
+        var need = used + ButtonSize + pad + _add.Width + pad;
+        var limit = horizontal
+            ? (Width - _start.Width) / 2 - pad
+            : (Height - _start.Height) / 2 - pad;
+        return need <= limit;
     }
 
     private void UpdateMoveGlyphs()
@@ -422,19 +473,16 @@ public sealed class BarForm : Form
         _alwaysVisible = on;
         ShowWindowsTaskbar(!on);   // nasconde/mostra la barra di Windows
 
+        // la visibilità delle frecce la decide LayoutControls in base a _replaceTaskbar
         if (on)
         {
             _side = Side.Bottom;
             Expand();
-            _moveA.Visible = false;
-            _moveB.Visible = false;
             TopMost = true;
         }
         else
         {
             _side = Side.Top;
-            _moveA.Visible = true;
-            _moveB.Visible = true;
             Collapse();
         }
     }
@@ -537,7 +585,7 @@ public sealed class BarForm : Form
         }
         else if (e.Button == MouseButtons.Right)
         {
-            var menu = new ContextMenuStrip();
+            var menu = BarMenuStyle.New();
             menu.Items.Add("Rimuovi dalla barra", null, (_, _) =>
             {
                 try { File.Delete(file); } catch { }
@@ -553,19 +601,39 @@ public sealed class BarForm : Form
 
     private void OnFileDrop(object? sender, DragEventArgs e)
     {
-        if (e.Data?.GetData(DataFormats.FileDrop) is string[] files)
+        if (e.Data?.GetData(DataFormats.FileDrop) is not string[] files)
         {
-            foreach (var f in files)
+            return;
+        }
+
+        var full = false;
+        foreach (var f in files)
+        {
+            if (!HasRoomForQuickItem())
             {
-                AddShortcut(f);
+                full = true;
+                break;
             }
-            ReloadQuickItems();
+
+            AddShortcut(f);
+            ReloadQuickItems();  // ricarica subito: il prossimo controllo di spazio lo tiene conto
             LayoutControls();
+        }
+
+        if (full)
+        {
+            BarFullMessage();
         }
     }
 
     private void AddShortcutViaDialog()
     {
+        if (!HasRoomForQuickItem())
+        {
+            BarFullMessage();
+            return;
+        }
+
         _pinned++;
         try
         {
@@ -580,6 +648,24 @@ public sealed class BarForm : Form
                 ReloadQuickItems();
                 LayoutControls();
             }
+        }
+        finally
+        {
+            _pinned--;
+        }
+    }
+
+    private void BarFullMessage()
+    {
+        _pinned++;
+        try
+        {
+            MessageBox.Show(
+                "La barra è piena: gli avvii rapidi arrivano fino alla moneta.\n\n" +
+                "Per fare spazio rimuovi un'icona (tasto destro sull'icona → Rimuovi).",
+                "DesktopPager3D-OS",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
         finally
         {
@@ -847,7 +933,7 @@ public sealed class BarForm : Form
 
     private void ShowTrayIconsMenu()
     {
-        var m = new ContextMenuStrip();
+        var m = BarMenuStyle.New();
         List<TrayIconReader.TrayEntry> entries;
         try
         {
@@ -914,7 +1000,7 @@ public sealed class BarForm : Form
 
     private void ShowOpenProgramsMenu()
     {
-        var m = new ContextMenuStrip();
+        var m = BarMenuStyle.New();
         var wins = EnumOpenWindows();
         if (wins.Count == 0)
         {
@@ -1027,7 +1113,7 @@ public sealed class BarForm : Form
 
     private void ShowPowerMenu()
     {
-        var m = new ContextMenuStrip();
+        var m = BarMenuStyle.New();
         m.Items.Add("Sospendi", null, (_, _) => Suspend());
         m.Items.Add("Blocca", null, (_, _) => LockWorkStation());
         m.Items.Add("Disconnetti", null, (_, _) =>

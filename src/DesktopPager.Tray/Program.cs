@@ -8,6 +8,9 @@ internal static class Program
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
+        // stile della barra come predefinito per qualunque menu dell'app
+        BarMenuStyle.ApplyGlobal();
+
         // Istanza WPF (senza avviarne il loop): fornisce un Application.Current
         // così le finestre WPF con AllowsTransparency (overlay gelatina) si
         // possono mostrare da questo thread ospitato da WinForms.
