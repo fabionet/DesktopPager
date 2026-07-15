@@ -37,12 +37,19 @@ public sealed class Shop3DWindow : Window
     private sealed record Entry(string Name, string FullPath, bool IsContainer);
 
     private const int MaxEntries = 48;
-    // I banchi stanno in due gruppi ai lati: il corridoio centrale resta libero
-    // perché in fondo, al centro, c'è la porta di uscita.
-    private const int GroupColumns = 3;       // colonne per ciascun gruppo laterale
-    private const double CorridorHalf = 3.0;  // mezza larghezza del corridoio centrale
-    private const double SpacingX = 4.4;
-    private const double SpacingZ = 4.8;
+    // Stanza in stile labirinto: corridoio centrale libero fino all'uscita in
+    // fondo, le cartelle sono porte-cubo incassate nelle pareti (una schiera a
+    // sinistra e una a destra) e i file sono due schiere sospese davanti alle
+    // pareti. Niente piedistalli.
+    private const double FileLaneX = 4.2;   // corsia dei file
+    private const double CubeInnerX = 6.2;  // faccia della cartella-cubo verso il corridoio
+    private const double WallX = 7.4;       // pareti laterali
+    private const double DoorW = 2.6;       // larghezza della porta di una cartella
+    private const double DoorH = 3.0;       // altezza
+    private const double DoorOpenStart = 5.0; // distanza a cui la porta inizia ad aprirsi
+    private const double DoorOpenFull = 2.4;  // distanza a cui è spalancata
+    private const double DoorEnter = 1.7;     // si entra nella cartella
+    private const double SpacingZ = 4.8;   // passo delle schiere lungo il corridoio
     private const double MoveSpeed = 0.13;
     private const double TurnSpeed = 0.035; // radianti/tick
 
@@ -62,7 +69,18 @@ public sealed class Shop3DWindow : Window
 
     private readonly List<Entry> _entries = new();
     private readonly List<Point3D> _boothPos = new();
-    private readonly List<Model3DGroup> _boothGroups = new();
+    // parallelo a _entries; null per le cartelle (le porte non si rimpiccioliscono)
+    private readonly List<Model3DGroup?> _boothGroups = new();
+
+    /// <summary>Porta di una cartella: due ante che scorrono lungo la parete.</summary>
+    private sealed class FolderDoor
+    {
+        public int Entry;
+        public double X, Z;
+        public Model3DGroup Near = null!, Far = null!;
+    }
+
+    private readonly List<FolderDoor> _folderDoors = new();
     private readonly Dictionary<GeometryModel3D, int> _modelToEntry = new();
     private GeometryModel3D? _focusRing;
 
@@ -484,7 +502,42 @@ public sealed class Shop3DWindow : Window
 
         UpdateBoothScale();
         UpdateFocus();
+        if (UpdateFolderDoors())
+        {
+            return; // siamo entrati in una cartella: la stanza è stata ricostruita
+        }
         UpdateExitDoor();
+    }
+
+    /// <summary>
+    /// Le porte delle cartelle si aprono man mano che ci si avvicina; arrivando
+    /// sulla soglia si entra. Restituisce true se la stanza è cambiata.
+    /// </summary>
+    private bool UpdateFolderDoors()
+    {
+        foreach (var d in _folderDoors)
+        {
+            var dx = _px - d.X;
+            var dz = _pz - d.Z;
+            var dist = Math.Sqrt(dx * dx + dz * dz);
+
+            double open;
+            if (dist >= DoorOpenStart) open = 0;
+            else if (dist <= DoorOpenFull) open = 1;
+            else open = (DoorOpenStart - dist) / (DoorOpenStart - DoorOpenFull);
+
+            var slide = open * (DoorW / 2 + 0.05);
+            ((TranslateTransform3D)d.Near.Transform).OffsetZ = -slide;
+            ((TranslateTransform3D)d.Far.Transform).OffsetZ = slide;
+
+            if (dist <= DoorEnter && open >= 0.98)
+            {
+                Navigate(_entries[d.Entry].FullPath);
+                return true; // _folderDoors è stata ricostruita: non continuare il ciclo
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -564,6 +617,11 @@ public sealed class Shop3DWindow : Window
     {
         for (var i = 0; i < _boothGroups.Count && i < _boothPos.Count; i++)
         {
+            if (_boothGroups[i] is null)
+            {
+                continue; // porta di una cartella: non si rimpicciolisce
+            }
+
             var cx = _boothPos[i].X;
             var cz = _boothPos[i].Z;
             var dx = cx - _px;
@@ -763,6 +821,7 @@ public sealed class Shop3DWindow : Window
         _boothPos.Clear();
         _boothGroups.Clear();
         _modelToEntry.Clear();
+        _folderDoors.Clear();
 
         // luci: ambiente tenue + direzionale per dare volume
         var lights = new Model3DGroup();
@@ -770,13 +829,18 @@ public sealed class Shop3DWindow : Window
         lights.Children.Add(new DirectionalLight(Color.FromRgb(210, 210, 220), new Vector3D(-0.4, -1, -0.5)));
         _root.Children.Add(lights);
 
-        // metà per lato (la sinistra prende l'eventuale dispari); le righe sono
-        // quelle del gruppo più numeroso
-        var leftCount = (_entries.Count + 1) / 2;
-        var rows = Math.Max(1, (int)Math.Ceiling(
-            Math.Max(leftCount, _entries.Count - leftCount) / (double)GroupColumns));
-        _roomHalfW = CorridorHalf + (GroupColumns - 0.5) * SpacingX + 2.5;
-        _roomBackZ = -(rows * SpacingZ) - 2.5;
+        // cartelle -> porte nelle pareti; file -> schiere sospese. Ogni schiera
+        // alterna sinistra/destra, così i due lati restano equilibrati.
+        var folders = new List<int>();
+        var files = new List<int>();
+        for (var i = 0; i < _entries.Count; i++)
+        {
+            (_entries[i].IsContainer ? folders : files).Add(i);
+        }
+
+        var rows = Math.Max(1, Math.Max((folders.Count + 1) / 2, (files.Count + 1) / 2));
+        _roomHalfW = WallX;
+        _roomBackZ = -(2.5 + rows * SpacingZ) - 3.0;
         const double frontZ = 12.5;
         const double wallH = 5.0;
 
@@ -799,56 +863,154 @@ public sealed class Shop3DWindow : Window
         _root.Children.Add(Quad(signH * signAspect, signH, 0, wallH - 0.9, _roomBackZ + 0.2,
             new EmissiveMaterial(signBrush), facePlusZ: true));
 
-        // banchi
-        var accent = ThemeService.Accent;
-        var pedestalMat = new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(44, 46, 58)));
-        for (var i = 0; i < _entries.Count; i++)
+        // _boothPos/_boothGroups restano paralleli a _entries (li usano messa a
+        // fuoco e rimpicciolimento)
+        var pos = new Point3D[_entries.Count];
+        var groups = new Model3DGroup?[_entries.Count];
+
+        for (var j = 0; j < folders.Count; j++)
         {
-            // gruppo di sinistra o di destra; dentro al gruppo le colonne si
-            // riempiono dal corridoio verso l'esterno
-            var isLeft = i < leftCount;
-            var k = isLeft ? i : i - leftCount;
-            var col = k % GroupColumns;
-            var row = k / GroupColumns;
-            var x = (CorridorHalf + 0.5 * SpacingX + col * SpacingX) * (isLeft ? -1 : 1);
-            var z = -2.0 - row * SpacingZ;
-            _boothPos.Add(new Point3D(x, 0, z));
-
-            // ogni banco è un gruppo (così può essere scalato all'avvicinarsi)
-            var booth = new Model3DGroup();
-
-            // piedistallo
-            var pedestal = Box(1.5, 0.9, 0.7, x, 0.45, z, pedestalMat);
-            _modelToEntry[pedestal] = i;
-            booth.Children.Add(pedestal);
-
-            // pannello con anteprima/icona
-            var img = LoadBrush(_entries[i]);
-            if (img is not null)
-            {
-                var w = 1.5 * Math.Clamp(img.Value.aspect, 0.5, 1.8);
-                var panel = Quad(w, 1.5, x, 1.85, z + 0.36, new EmissiveMaterial(img.Value.brush), facePlusZ: true);
-                _modelToEntry[panel] = i;
-                booth.Children.Add(panel);
-            }
-
-            // etichetta col nome
-            var label = TextBrush(_entries[i].Name, 26,
-                Drawing.Color.FromArgb(220, 16, 18, 28), Drawing.Color.White, out var aspect);
-            var labelModel = Quad(1.7, 1.7 / aspect, x, 2.95, z + 0.36, new EmissiveMaterial(label), facePlusZ: true);
-            _modelToEntry[labelModel] = i;
-            booth.Children.Add(labelModel);
-
-            _boothGroups.Add(booth);
-            _root.Children.Add(booth);
+            var i = folders[j];
+            var side = j % 2 == 0 ? -1 : 1;
+            var z = -3.0 - j / 2 * SpacingZ;
+            pos[i] = new Point3D(side * CubeInnerX, 0, z);
+            groups[i] = null;                 // le porte non si rimpiccioliscono
+            BuildFolderDoor(i, side, z);
         }
 
+        for (var j = 0; j < files.Count; j++)
+        {
+            var i = files[j];
+            var side = j % 2 == 0 ? -1 : 1;
+            var x = side * FileLaneX;
+            var z = -2.5 - j / 2 * SpacingZ;
+            pos[i] = new Point3D(x, 0, z);
+            groups[i] = BuildFilePanel(i, x, z);
+        }
+
+        _boothPos.AddRange(pos);
+        _boothGroups.AddRange(groups);
+
         // anello di selezione (accento)
+        var accent = ThemeService.Accent;
         var ring = new EmissiveMaterial(new SolidColorBrush(Color.FromArgb(180, accent.R, accent.G, accent.B)));
         _focusRing = Box(1.7, 0.06, 1.1, 0, -100, 0, ring);
         _root.Children.Add(_focusRing);
 
         BuildExitDoor();
+    }
+
+    /// <summary>File sospeso davanti alla parete: anteprima/icona + nome, senza piedistallo.</summary>
+    private Model3DGroup BuildFilePanel(int i, double x, double z)
+    {
+        var g = new Model3DGroup();
+
+        // BackMaterial = null: visti da dietro sparirebbero col testo specchiato,
+        // meglio che si vedano solo di fronte (camminando verso il fondo)
+        var img = LoadBrush(_entries[i]);
+        if (img is not null)
+        {
+            var w = 1.5 * Math.Clamp(img.Value.aspect, 0.5, 1.8);
+            var panel = Quad(w, 1.5, x, 1.55, z, new EmissiveMaterial(img.Value.brush), facePlusZ: true);
+            panel.BackMaterial = null;
+            _modelToEntry[panel] = i;
+            g.Children.Add(panel);
+        }
+
+        var label = TextBrush(_entries[i].Name, 26,
+            Drawing.Color.FromArgb(220, 16, 18, 28), Drawing.Color.White, out var aspect);
+        var labelModel = Quad(1.7, 1.7 / aspect, x, 2.55, z, new EmissiveMaterial(label), facePlusZ: true);
+        labelModel.BackMaterial = null;
+        _modelToEntry[labelModel] = i;
+        g.Children.Add(labelModel);
+
+        _root.Children.Add(g);
+        return g;
+    }
+
+    /// <summary>
+    /// Cartella come cubo incassato nella parete, con due ante che scorrono via
+    /// all'avvicinarsi (vedi UpdateFolderDoors) scoprendo l'interno luminoso.
+    /// </summary>
+    private void BuildFolderDoor(int i, int side, double z)
+    {
+        var faceX = side * CubeInnerX;
+        var depth = WallX - CubeInnerX;
+
+        // Il cubo della cartella è un PORTALE incassato, non un blocco pieno:
+        // architrave e montanti attorno all'apertura. Con un Box solido la sua
+        // faccia verso il corridoio coprirebbe ante e interno luminoso.
+        var cubeMat = new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(52, 58, 78)));
+        var cx = side * (CubeInnerX + depth / 2);
+        var lintel = Box(depth, 0.5, DoorW + 0.6, cx, DoorH + 0.25, z, cubeMat);
+        _modelToEntry[lintel] = i;
+        _root.Children.Add(lintel);
+        _root.Children.Add(Box(depth, DoorH + 0.5, 0.3, cx, (DoorH + 0.5) / 2, z - DoorW / 2 - 0.15, cubeMat));
+        _root.Children.Add(Box(depth, DoorH + 0.5, 0.3, cx, (DoorH + 0.5) / 2, z + DoorW / 2 + 0.15, cubeMat));
+
+        // interno luminoso, visibile quando le ante si aprono
+        var glow = new EmissiveMaterial(new SolidColorBrush(Color.FromRgb(
+            TesseractPalette.Core.R, TesseractPalette.Core.G, TesseractPalette.Core.B)));
+        _root.Children.Add(WallQuad(side * (WallX - 0.15), 0.05, DoorH, z - DoorW / 2, z + DoorW / 2, glow));
+
+        // due ante (colori del tesseratto) che scorrono lungo la parete
+        var door = new FolderDoor { Entry = i, X = faceX, Z = z };
+        door.Near = DoorPanel(faceX, z - DoorW / 2, z, TesseractPalette.Left, i);
+        door.Far = DoorPanel(faceX, z, z + DoorW / 2, TesseractPalette.Right, i);
+        _folderDoors.Add(door);
+
+        // Nome sull'architrave, rivolto al corridoio: girandosi verso la porta
+        // per entrarci si deve poter leggere di che cartella si tratta (un
+        // pannello rivolto all'ingresso si vedrebbe di taglio).
+        var label = TextBrush(_entries[i].Name, 26,
+            Drawing.Color.FromArgb(220, 16, 18, 28), Drawing.Color.White, out var aspect);
+        var lw = DoorW;
+        var lh = Math.Min(0.42, lw / aspect);
+        var labelModel = WallQuad(faceX - side * 0.03, DoorH + 0.05, DoorH + 0.05 + lh,
+            z - lw / 2, z + lw / 2, new EmissiveMaterial(label), flipU: side < 0);
+        _modelToEntry[labelModel] = i;
+        _root.Children.Add(labelModel);
+    }
+
+    private Model3DGroup DoorPanel(double x, double z0, double z1, (byte R, byte G, byte B) col, int entry)
+    {
+        var model = WallQuad(x, 0.05, DoorH, z0, z1,
+            new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(col.R, col.G, col.B))));
+        _modelToEntry[model] = entry;
+
+        var g = new Model3DGroup { Transform = new TranslateTransform3D(0, 0, 0) };
+        g.Children.Add(model);
+        _root.Children.Add(g);
+        return g;
+    }
+
+    /// <summary>
+    /// Quadrilatero sul piano YZ (parete laterale), visibile da entrambi i lati.
+    /// flipU inverte la texture lungo z: guardando la parete di SINISTRA lo
+    /// schermo scorre verso -z, quindi senza inversione il testo si legge
+    /// specchiato (sulla destra invece va già bene).
+    /// </summary>
+    private static GeometryModel3D WallQuad(double x, double y0, double y1, double z0, double z1,
+        Material mat, bool flipU = false)
+    {
+        var u0 = flipU ? 1.0 : 0.0;
+        var u1 = flipU ? 0.0 : 1.0;
+        var mesh = new MeshGeometry3D();
+        mesh.Positions.Add(new Point3D(x, y1, z0));
+        mesh.Positions.Add(new Point3D(x, y1, z1));
+        mesh.Positions.Add(new Point3D(x, y0, z1));
+        mesh.Positions.Add(new Point3D(x, y0, z0));
+        mesh.TextureCoordinates.Add(new Point(u0, 0));
+        mesh.TextureCoordinates.Add(new Point(u1, 0));
+        mesh.TextureCoordinates.Add(new Point(u1, 1));
+        mesh.TextureCoordinates.Add(new Point(u0, 1));
+        mesh.TriangleIndices.Add(0);
+        mesh.TriangleIndices.Add(2);
+        mesh.TriangleIndices.Add(1);
+        mesh.TriangleIndices.Add(0);
+        mesh.TriangleIndices.Add(3);
+        mesh.TriangleIndices.Add(2);
+        return new GeometryModel3D(mesh, mat) { BackMaterial = mat };
     }
 
     /// <summary>
