@@ -24,14 +24,16 @@ public sealed class BarForm : Form
     private const int TabThickness = 9;
     private const int ButtonSize = 38;
 
-    // palette rosso scuro in rilievo (condivisa con il menu Start)
-    private static readonly Color BarTop = BarStyle.Top;
-    private static readonly Color BarBottom = BarStyle.Bottom;
-    private static readonly Color BarMid = BarStyle.Mid;
-    private static readonly Color BarHover = BarStyle.Hover;
-    private static readonly Color BarHi = BarStyle.Highlight;
-    private static readonly Color BarShadow = BarStyle.Shadow;
-    private static readonly Color BarText = BarStyle.Text;
+    // palette in rilievo (condivisa con menu e menu Start). Proprietà, non campi:
+    // il colore base è cambiabile a runtime dal menu della tray e va riletto a
+    // ogni disegno.
+    private static Color BarTop => BarStyle.Top;
+    private static Color BarBottom => BarStyle.Bottom;
+    private static Color BarMid => BarStyle.Mid;
+    private static Color BarHover => BarStyle.Hover;
+    private static Color BarHi => BarStyle.Highlight;
+    private static Color BarShadow => BarStyle.Shadow;
+    private static Color BarText => BarStyle.Text;
 
     // emblema tesseratto della moneta (palette condivisa con l'intro 3D)
     private static Color Rgb((byte R, byte G, byte B) c) => Color.FromArgb(c.R, c.G, c.B);
@@ -172,11 +174,31 @@ public sealed class BarForm : Form
             HookDrop(c);
         }
 
+        // cambio colore dal menu della tray: ridipingi subito
+        BarStyle.Changed += OnStyleChanged;
+
         Directory.CreateDirectory(QuickLaunchFolder);
         SeedDefaultShortcuts();
         ReloadQuickItems();
         Collapse();
         _watch.Start();
+    }
+
+    private void OnStyleChanged()
+    {
+        if (IsDisposed || !IsHandleCreated)
+        {
+            return;
+        }
+
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(OnStyleChanged));
+            return;
+        }
+
+        ApplyTheme(); // copre anche gli avvii rapidi: sono figli del Form
+        Invalidate(true);
     }
 
     private void HookRightClick(Control c)
@@ -1371,6 +1393,7 @@ public sealed class BarForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        BarStyle.Changed -= OnStyleChanged; // evento statico: non trattenere il form
         _watch.Stop();
         _clockTick.Stop();
         _statsTick.Stop();

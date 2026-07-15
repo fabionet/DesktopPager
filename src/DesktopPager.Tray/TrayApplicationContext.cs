@@ -79,6 +79,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         effectsMenu.DropDownItems.Add(cubeItem);
         effectsMenu.DropDownItems.Add(wobbleItem);
         trayMenu.Items.Add(effectsMenu);
+        trayMenu.Items.Add(BuildColorMenu());
         var autostartItem = new ToolStripMenuItem("Avvio automatico con Windows")
         {
             Checked = _autostartService.IsEnabled()
@@ -133,6 +134,64 @@ public sealed class TrayApplicationContext : ApplicationContext
         _hotkeyManager.Dispose();
         _window.Dispose();
         base.ExitThreadCore();
+    }
+
+    /// <summary>
+    /// Sottomenu del colore: cambia il colore base da cui derivano barra, menu
+    /// e menu Start. La scelta viene ricordata tra un avvio e l'altro.
+    /// </summary>
+    private static ToolStripMenuItem BuildColorMenu()
+    {
+        var menu = new ToolStripMenuItem("Colore della barra e dei menu");
+        var items = new List<ToolStripMenuItem>();
+
+        void Refresh()
+        {
+            foreach (var it in items)
+            {
+                it.Checked = it.Tag is Color c && c.ToArgb() == BarStyle.Base.ToArgb();
+            }
+        }
+
+        foreach (var (name, color) in BarStyle.Presets)
+        {
+            var item = new ToolStripMenuItem(name)
+            {
+                Tag = color,
+                Image = Swatch(color)
+            };
+            item.Click += (_, _) => { BarStyle.Base = color; Refresh(); };
+            items.Add(item);
+            menu.DropDownItems.Add(item);
+        }
+
+        menu.DropDownItems.Add(new ToolStripSeparator());
+        menu.DropDownItems.Add("Personalizzato…", null, (_, _) =>
+        {
+            using var dlg = new ColorDialog { Color = BarStyle.Base, FullOpen = true };
+            if (dlg.ShowDialog() == DialogResult.OK)
+            {
+                BarStyle.Base = dlg.Color;
+                Refresh();
+            }
+        });
+
+        menu.DropDownOpening += (_, _) => Refresh();
+        Refresh();
+        return menu;
+    }
+
+    /// <summary>Quadratino del colore da mostrare nel menu.</summary>
+    private static Bitmap Swatch(Color color)
+    {
+        var bmp = new Bitmap(16, 16);
+        using var g = Graphics.FromImage(bmp);
+        g.Clear(Color.Transparent);
+        using var b = new SolidBrush(color);
+        g.FillRectangle(b, 1, 1, 14, 14);
+        using var p = new Pen(Color.FromArgb(160, 255, 255, 255));
+        g.DrawRectangle(p, 1, 1, 13, 13);
+        return bmp;
     }
 
     private static Icon ResolveIcon()

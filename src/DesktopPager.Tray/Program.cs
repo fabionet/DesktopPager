@@ -8,6 +8,9 @@ internal static class Program
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
+        // colore scelto dall'utente, prima di costruire qualunque interfaccia
+        BarStyle.Load();
+
         // stile della barra come predefinito per qualunque menu dell'app
         BarMenuStyle.ApplyGlobal();
 
