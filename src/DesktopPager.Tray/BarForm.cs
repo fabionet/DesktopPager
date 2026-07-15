@@ -47,6 +47,7 @@ public sealed class BarForm : Form
     private bool _replaceTaskbar;   // sostituisce la barra di Windows
     private bool _alwaysVisible;    // non collassare (modalità sostituzione)
     private int _pinned; // > 0 se un dialogo/menu e' aperto: non collassare
+    private bool _dragActive; // trascinamento in corso: non collassare
 
     /// <summary>Servizio effetti desktop 3D (cubo + gelatina); impostato dal contesto tray.</summary>
     public DesktopEffectsService? Effects { get; set; }
@@ -156,14 +157,19 @@ public sealed class BarForm : Form
         _clockTick.Start();
 
         MouseEnter += (_, _) => { if (!_expanded) Expand(); };
-        DragEnter += (_, e) => { if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true) e.Effect = DragDropEffects.Copy; };
-        DragDrop += OnFileDrop;
 
         // menu col tasto destro su tutta la barra
         HookRightClick(this);
         foreach (Control c in Controls)
         {
             HookRightClick(c);
+        }
+
+        // trascinamento: accettato su tutta la barra, anche sopra i controlli
+        HookDrop(this);
+        foreach (Control c in Controls)
+        {
+            HookDrop(c);
         }
 
         Directory.CreateDirectory(QuickLaunchFolder);
@@ -182,6 +188,38 @@ public sealed class BarForm : Form
                 ShowBarMenu();
             }
         };
+    }
+
+    /// <summary>
+    /// Rende il controllo un bersaglio valido per il trascinamento di file.
+    /// Serve su OGNI controllo: col solo AllowDrop sul Form, lasciare il file
+    /// sopra un'icona, la moneta o l'orologio non funzionerebbe.
+    /// </summary>
+    private void HookDrop(Control c)
+    {
+        c.AllowDrop = true;
+        c.DragEnter += OnDragEnterBar;
+        c.DragOver += OnDragEnterBar;
+        c.DragLeave += (_, _) => _dragActive = false;
+        c.DragDrop += OnFileDrop;
+    }
+
+    private void OnDragEnterBar(object? sender, DragEventArgs e)
+    {
+        if (e.Data?.GetDataPresent(DataFormats.FileDrop) != true)
+        {
+            e.Effect = DragDropEffects.None;
+            return;
+        }
+
+        e.Effect = DragDropEffects.Copy;
+        // la barra chiusa è una linguetta di pochi pixel: aprila per dare
+        // spazio al rilascio, e tienila aperta finché dura il trascinamento
+        _dragActive = true;
+        if (!_expanded)
+        {
+            Expand();
+        }
     }
 
     public void ShowBarMenu()
@@ -305,7 +343,7 @@ public sealed class BarForm : Form
 
     private void CollapseIfIdle()
     {
-        if (_expanded && !_alwaysVisible && _pinned == 0 && !Bounds.Contains(Cursor.Position))
+        if (_expanded && !_alwaysVisible && !_dragActive && _pinned == 0 && !Bounds.Contains(Cursor.Position))
         {
             Collapse();
         }
@@ -552,8 +590,9 @@ public sealed class BarForm : Form
             {
                 // niente icona: resta vuoto ma cliccabile
             }
-            _tips.SetToolTip(pb, Path.GetFileNameWithoutExtension(file));
+            _tips.SetToolTip(pb, Path.GetFileNameWithoutExtension(file) + "  (tasto destro: rimuovi)");
             pb.MouseClick += OnQuickItemClick;
+            HookDrop(pb); // si può rilasciare un file anche sopra un'icona esistente
             Controls.Add(pb);
             _quickItems.Add(pb);
         }
@@ -601,6 +640,7 @@ public sealed class BarForm : Form
 
     private void OnFileDrop(object? sender, DragEventArgs e)
     {
+        _dragActive = false;
         if (e.Data?.GetData(DataFormats.FileDrop) is not string[] files)
         {
             return;
