@@ -38,6 +38,7 @@ internal sealed class WobbleOverlay : Window
 
     private double _dipScale = 1.0;
     private double _wPx, _hPx;             // dimensione istantanea (px)
+    private double _marginPx;              // bordo per shear/schiacciamento
     private double _px, _py, _vx, _vy;     // posizione/velocità molla (px, top-left)
     private double _tx, _ty;               // bersaglio (px, top-left) = finestra reale
     private bool _settling;
@@ -98,15 +99,18 @@ internal sealed class WobbleOverlay : Window
         _vx = _vy = 0;
         _settling = false;
 
-        // copre l'intero desktop virtuale, in DIP
-        Left = SystemParameters.VirtualScreenLeft;
-        Top = SystemParameters.VirtualScreenTop;
-        Width = SystemParameters.VirtualScreenWidth;
-        Height = SystemParameters.VirtualScreenHeight;
+        // Grande quanto la finestra più un margine per shear e schiacciamento,
+        // NON quanto il desktop: una finestra AllowsTransparency è un layered
+        // window composto via software, quindi l'area conta moltissimo.
+        _marginPx = Math.Max(48, Math.Max(_wPx, _hPx) * 0.22);
+        Width = (_wPx + _marginPx * 2) * _dipScale;
+        Height = (_hPx + _marginPx * 2) * _dipScale;
 
         _image.Source = snapshot;
         _image.Width = _wPx * _dipScale;
         _image.Height = _hPx * _dipScale;
+        Canvas.SetLeft(_image, _marginPx * _dipScale);
+        Canvas.SetTop(_image, _marginPx * _dipScale);
 
         Active = true;
         if (!IsVisible)
@@ -161,10 +165,10 @@ internal sealed class WobbleOverlay : Window
         _scale.ScaleX = 1 + (Math.Abs(_vx) >= Math.Abs(_vy) ? squash : -squash * 0.6);
         _scale.ScaleY = 1 + (Math.Abs(_vy) > Math.Abs(_vx) ? squash : -squash * 0.6);
 
-        var canvasX = _px * _dipScale - SystemParameters.VirtualScreenLeft;
-        var canvasY = _py * _dipScale - SystemParameters.VirtualScreenTop;
-        Canvas.SetLeft(_image, canvasX);
-        Canvas.SetTop(_image, canvasY);
+        // l'immagine sta ferma dentro l'overlay: è l'overlay (piccolo) a seguire
+        // la molla, così l'area composta via software resta minima
+        Left = (_px - _marginPx) * _dipScale;
+        Top = (_py - _marginPx) * _dipScale;
     }
 
     private static double Clamp(double v, double lo, double hi) => v < lo ? lo : v > hi ? hi : v;

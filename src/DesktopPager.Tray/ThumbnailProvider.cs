@@ -9,7 +9,27 @@ namespace DesktopPager.Tray;
 /// </summary>
 public static class ThumbnailProvider
 {
-    public static Bitmap? GetThumbnail(string path, int size)
+    /// <summary>Flag SIIGBF di IShellItemImageFactory.GetImage.</summary>
+    [Flags]
+    public enum ThumbFlags
+    {
+        /// <summary>Anteprima vera: se manca, la shell la GENERA (lento).</summary>
+        ResizeToFit = 0x0000,
+        BiggerSizeOk = 0x0001,
+        /// <summary>Solo da memoria: fallisce invece di generarla (veloce).</summary>
+        MemoryOnly = 0x0002,
+        /// <summary>Solo l'icona, mai l'anteprima (veloce).</summary>
+        IconOnly = 0x0004,
+        ThumbnailOnly = 0x0008,
+        /// <summary>Solo se già in cache: fallisce invece di generarla (veloce).</summary>
+        InCacheOnly = 0x0010,
+        ScaleUp = 0x0100
+    }
+
+    public static Bitmap? GetThumbnail(string path, int size) =>
+        GetThumbnail(path, size, ThumbFlags.ResizeToFit);
+
+    public static Bitmap? GetThumbnail(string path, int size, ThumbFlags flags)
     {
         try
         {
@@ -21,8 +41,7 @@ public static class ThumbnailProvider
             }
 
             var s = new SIZE { cx = size, cy = size };
-            // SIIGBF_RESIZETOFIT = 0
-            factory.GetImage(s, 0, out var hbmp);
+            factory.GetImage(s, (int)flags, out var hbmp);
             Marshal.ReleaseComObject(factory);
             if (hbmp == IntPtr.Zero)
             {
@@ -55,9 +74,14 @@ public static class ThumbnailProvider
                 return null;
             }
 
-            var bmp = new Bitmap(size, size);
+            // ToBitmap()+DrawImage conserva l'alfa: DrawIcon su superficie GDI+
+            // 32bpp lascerebbe un quadratino nero attorno alle icone legacy
+            using var src = icon.ToBitmap();
+            var bmp = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
             using var g = Graphics.FromImage(bmp);
-            g.DrawIcon(icon, new Rectangle(size / 4, size / 4, size / 2, size / 2));
+            g.Clear(Color.Transparent);
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            g.DrawImage(src, new Rectangle(size / 4, size / 4, size / 2, size / 2));
             return bmp;
         }
         catch

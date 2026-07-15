@@ -37,9 +37,12 @@ Resta residente in memoria con un'icona nell'area di notifica.
 
 **Vista 3D Game** 🎮
 - Esplorazione in prima persona di dischi e cartelle come dentro un negozio, con
-  un ingresso cinematografico (caricamento → porta bianca a 4 parti in stile logo
-  Windows → vista dall'alto → atterraggio). Movimento frecce/WASD, Invio o clic per
-  entrare/aprire, Backspace per risalire, Esc per uscire.
+  un ingresso cinematografico (caricamento → il tesseratto colorato si apre come una
+  porta a 4 parti → vista dall'alto → atterraggio). Movimento frecce/WASD, Invio o clic per
+  entrare/aprire, Backspace per risalire.
+- **Uscita**: in fondo a ogni stanza c'è una **porta-tesseratto** che si apre man mano
+  che ti avvicini, scoprendo il desktop oltre il varco; attraversandola parte uno zoom
+  che ti riporta al desktop. In alternativa, `Esc`.
 
 **Effetti desktop 3D** (opzionali, di default spenti)
 - 🧊 **Cubo del desktop**: tieni **Ctrl + tasto destro** e trascina sul desktop per
@@ -55,7 +58,7 @@ Resta residente in memoria con un'icona nell'area di notifica.
 
 ## Installazione (utente finale)
 
-1. Scarica `DesktopPager3D-OS-1.1.0-Setup.msi` dalla pagina
+1. Scarica `DesktopPager3D-OS-1.2.0-Setup.msi` dalla pagina
    [Releases](https://github.com/fabionet/DesktopPager3D-OS/releases).
 2. Doppio clic sull'MSI e segui la procedura guidata (richiede i privilegi di
    amministratore perché installa in `C:\Program Files\DesktopPager3D-OS`).
@@ -158,9 +161,14 @@ operativo/dei relativi handler e restano di proprietà dei rispettivi titolari.
 
 ### Marchi
 
-**Windows®**, il **logo Windows** (l'emblema a quattro colori) e **Segoe®** sono
-marchi registrati di **Microsoft Corporation**. Questo progetto è un'iniziativa
-**indipendente**, **non è affiliato, sponsorizzato né approvato da Microsoft**.
-I riferimenti a Windows e l'uso di elementi grafici in stile Windows hanno scopo
-puramente descrittivo/di interoperabilità con il sistema operativo. Tutti gli
-altri marchi citati appartengono ai rispettivi titolari.
+L'emblema di DesktopPager3D-OS — la moneta della barra, la porta dell'intro 3D e
+la porta di uscita — è un **tesseratto** (ipercubo) di **disegno originale**.
+**Il logo Windows non è più utilizzato in alcun punto del programma**: nessun
+elemento grafico riproduce o imita marchi figurativi Microsoft.
+
+**Windows®** e **Segoe®** sono marchi registrati di **Microsoft Corporation**.
+Questo progetto è un'iniziativa **indipendente**, **non è affiliato, sponsorizzato
+né approvato da Microsoft**. Il nome «Windows» compare solo con scopo descrittivo
+e di interoperabilità (l'app gira su Windows e ne usa API, font e icone di
+sistema, elencati nella tabella qui sopra). Tutti gli altri marchi citati
+appartengono ai rispettivi titolari.

@@ -58,6 +58,12 @@ internal sealed class CubeOverlay : Window
         Focusable = false;
         Content = _viewport;
 
+        // GPU debole (qui lo schermo è pilotato dalla Intel HD 3000): niente
+        // antialiasing del 3D né riscalatura di qualità della texture a schermo
+        // intero, sono il costo maggiore e qui non si notano.
+        RenderOptions.SetEdgeMode(_viewport, EdgeMode.Aliased);
+        RenderOptions.SetBitmapScalingMode(_viewport, BitmapScalingMode.LowQuality);
+
         _timer.Tick += (_, _) => Step();
     }
 

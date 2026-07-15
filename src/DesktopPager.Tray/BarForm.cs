@@ -24,20 +24,32 @@ public sealed class BarForm : Form
     private const int TabThickness = 9;
     private const int ButtonSize = 38;
 
-    // palette rosso scuro in rilievo (condivisa con il menu Start)
-    private static readonly Color BarTop = BarStyle.Top;
-    private static readonly Color BarBottom = BarStyle.Bottom;
-    private static readonly Color BarMid = BarStyle.Mid;
-    private static readonly Color BarHover = BarStyle.Hover;
-    private static readonly Color BarHi = BarStyle.Highlight;
-    private static readonly Color BarShadow = BarStyle.Shadow;
-    private static readonly Color BarText = BarStyle.Text;
+    // palette in rilievo (condivisa con menu e menu Start). Proprietà, non campi:
+    // il colore base è cambiabile a runtime dal menu della tray e va riletto a
+    // ogni disegno.
+    private static Color BarTop => BarStyle.Top;
+    private static Color BarBottom => BarStyle.Bottom;
+    private static Color BarMid => BarStyle.Mid;
+    private static Color BarHover => BarStyle.Hover;
+    private static Color BarHi => BarStyle.Highlight;
+    private static Color BarShadow => BarStyle.Shadow;
+    private static Color BarText => BarStyle.Text;
+
+    // emblema tesseratto della moneta (palette condivisa con l'intro 3D)
+    private static Color Rgb((byte R, byte G, byte B) c) => Color.FromArgb(c.R, c.G, c.B);
+    private static readonly Color TesseractTop = Rgb(TesseractPalette.Top);
+    private static readonly Color TesseractRight = Rgb(TesseractPalette.Right);
+    private static readonly Color TesseractBottom = Rgb(TesseractPalette.Bottom);
+    private static readonly Color TesseractLeft = Rgb(TesseractPalette.Left);
+    private static readonly Color TesseractCore = Rgb(TesseractPalette.Core);
+    private static readonly Color TesseractEdge = Rgb(TesseractPalette.Edge);
 
     private Side _side = Side.Top;
     private bool _expanded;
     private bool _replaceTaskbar;   // sostituisce la barra di Windows
     private bool _alwaysVisible;    // non collassare (modalità sostituzione)
     private int _pinned; // > 0 se un dialogo/menu e' aperto: non collassare
+    private bool _dragActive; // trascinamento in corso: non collassare
 
     /// <summary>Servizio effetti desktop 3D (cubo + gelatina); impostato dal contesto tray.</summary>
     public DesktopEffectsService? Effects { get; set; }
@@ -110,7 +122,7 @@ public sealed class BarForm : Form
         _apps.Click += (_, _) => ShowOpenProgramsMenu();
         _power.Click += (_, _) => ShowPowerMenu();
         _tray.Click += (_, _) => ShowTrayIconsMenu();
-        _start.Coin = MakeWindowsCoin(StartSize * 2);
+        _start.Coin = MakeTesseractCoin(StartSize * 2);
         _start.Activated += ShowStartMenu; // dopo l'animazione di "giro" della moneta
         _net.Click += (_, _) => LaunchControl("ncpa.cpl");
 
@@ -147,8 +159,6 @@ public sealed class BarForm : Form
         _clockTick.Start();
 
         MouseEnter += (_, _) => { if (!_expanded) Expand(); };
-        DragEnter += (_, e) => { if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true) e.Effect = DragDropEffects.Copy; };
-        DragDrop += OnFileDrop;
 
         // menu col tasto destro su tutta la barra
         HookRightClick(this);
@@ -157,11 +167,38 @@ public sealed class BarForm : Form
             HookRightClick(c);
         }
 
+        // trascinamento: accettato su tutta la barra, anche sopra i controlli
+        HookDrop(this);
+        foreach (Control c in Controls)
+        {
+            HookDrop(c);
+        }
+
+        // cambio colore dal menu della tray: ridipingi subito
+        BarStyle.Changed += OnStyleChanged;
+
         Directory.CreateDirectory(QuickLaunchFolder);
         SeedDefaultShortcuts();
         ReloadQuickItems();
         Collapse();
         _watch.Start();
+    }
+
+    private void OnStyleChanged()
+    {
+        if (IsDisposed || !IsHandleCreated)
+        {
+            return;
+        }
+
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(OnStyleChanged));
+            return;
+        }
+
+        ApplyTheme(); // copre anche gli avvii rapidi: sono figli del Form
+        Invalidate(true);
     }
 
     private void HookRightClick(Control c)
@@ -175,9 +212,41 @@ public sealed class BarForm : Form
         };
     }
 
+    /// <summary>
+    /// Rende il controllo un bersaglio valido per il trascinamento di file.
+    /// Serve su OGNI controllo: col solo AllowDrop sul Form, lasciare il file
+    /// sopra un'icona, la moneta o l'orologio non funzionerebbe.
+    /// </summary>
+    private void HookDrop(Control c)
+    {
+        c.AllowDrop = true;
+        c.DragEnter += OnDragEnterBar;
+        c.DragOver += OnDragEnterBar;
+        c.DragLeave += (_, _) => _dragActive = false;
+        c.DragDrop += OnFileDrop;
+    }
+
+    private void OnDragEnterBar(object? sender, DragEventArgs e)
+    {
+        if (e.Data?.GetDataPresent(DataFormats.FileDrop) != true)
+        {
+            e.Effect = DragDropEffects.None;
+            return;
+        }
+
+        e.Effect = DragDropEffects.Copy;
+        // la barra chiusa è una linguetta di pochi pixel: aprila per dare
+        // spazio al rilascio, e tienila aperta finché dura il trascinamento
+        _dragActive = true;
+        if (!_expanded)
+        {
+            Expand();
+        }
+    }
+
     public void ShowBarMenu()
     {
-        var m = new ContextMenuStrip();
+        var m = BarMenuStyle.New();
         var repl = new ToolStripMenuItem("Sostituisci la barra di Windows")
         {
             Checked = _replaceTaskbar,
@@ -278,8 +347,10 @@ public sealed class BarForm : Form
         _expanded = true;
         ApplyTheme();
         Bounds = EdgeBounds();
-        LayoutControls();
         foreach (Control c in Controls) c.Visible = true;
+        // dopo il "mostra tutto": è LayoutControls a decidere frecce e
+        // traboccamento degli avvii rapidi oltre la moneta
+        LayoutControls();
         UpdateStats();
         Invalidate();
     }
@@ -294,7 +365,7 @@ public sealed class BarForm : Form
 
     private void CollapseIfIdle()
     {
-        if (_expanded && !_alwaysVisible && _pinned == 0 && !Bounds.Contains(Cursor.Position))
+        if (_expanded && !_alwaysVisible && !_dragActive && _pinned == 0 && !Bounds.Contains(Cursor.Position))
         {
             Collapse();
         }
@@ -325,16 +396,36 @@ public sealed class BarForm : Form
         var horizontal = _side is Side.Top or Side.Bottom;
         UpdateMoveGlyphs();
 
-        var head = new List<Control> { _moveA };
-        var tail = new List<Control> { _explorer, _ps, _cmd, _flow, _game, _tray, _apps, _power, _perf, _net, _clock, _moveB };
+        // In sostituzione della barra di Windows la posizione è fissa (in basso):
+        // le frecce di spostamento non servono e lo spazio ai lati va agli avvii
+        // rapidi e ai tasti di destra.
+        var arrows = !_replaceTaskbar;
+        _moveA.Visible = arrows;
+        _moveB.Visible = arrows;
+
+        var head = new List<Control>();
+        if (arrows) head.Add(_moveA);
+        var tail = new List<Control> { _explorer, _ps, _cmd, _flow, _game, _tray, _apps, _power, _perf, _net, _clock };
+        if (arrows) tail.Add(_moveB);
         var middle = new List<Control>(_quickItems) { _add };
 
-        var pad = 5;
+        const int pad = 5;
         if (horizontal)
         {
+            // la moneta resta al centro: è il limite oltre cui gli avvii rapidi
+            // non possono andare
+            _start.Location = new Point((Width - _start.Width) / 2, (Thickness - _start.Height) / 2);
+            var limit = _start.Location.X - pad;
+
             var x = pad;
             foreach (var c in head) { c.Location = new Point(x, (Thickness - c.Height) / 2); x += c.Width + pad; }
-            foreach (var c in middle) { c.Location = new Point(x, (Thickness - c.Height) / 2); x += c.Width + pad; }
+            foreach (var c in middle)
+            {
+                if (x + c.Width > limit) { c.Visible = false; continue; } // barra piena
+                c.Location = new Point(x, (Thickness - c.Height) / 2);
+                x += c.Width + pad;
+            }
+
             var xr = Width - pad;
             for (var i = tail.Count - 1; i >= 0; i--)
             {
@@ -342,14 +433,21 @@ public sealed class BarForm : Form
                 tail[i].Location = new Point(xr, (Thickness - tail[i].Height) / 2);
                 xr -= pad;
             }
-            // moneta Windows al centro della barra
-            _start.Location = new Point((Width - _start.Width) / 2, (Thickness - _start.Height) / 2);
         }
         else
         {
+            _start.Location = new Point((Thickness - _start.Width) / 2, (Height - _start.Height) / 2);
+            var limit = _start.Location.Y - pad;
+
             var y = pad;
             foreach (var c in head) { c.Location = new Point((Thickness - c.Width) / 2, y); y += c.Height + pad; }
-            foreach (var c in middle) { c.Location = new Point((Thickness - c.Width) / 2, y); y += c.Height + pad; }
+            foreach (var c in middle)
+            {
+                if (y + c.Height > limit) { c.Visible = false; continue; }
+                c.Location = new Point((Thickness - c.Width) / 2, y);
+                y += c.Height + pad;
+            }
+
             var yb = Height - pad;
             for (var i = tail.Count - 1; i >= 0; i--)
             {
@@ -357,8 +455,30 @@ public sealed class BarForm : Form
                 tail[i].Location = new Point((Thickness - tail[i].Width) / 2, yb);
                 yb -= pad;
             }
-            _start.Location = new Point((Thickness - _start.Width) / 2, (Height - _start.Height) / 2);
         }
+    }
+
+    /// <summary>C'è ancora posto per un altro avvio rapido prima della moneta?</summary>
+    private bool HasRoomForQuickItem()
+    {
+        var horizontal = _side is Side.Top or Side.Bottom;
+        const int pad = 5;
+        var used = pad;
+        if (!_replaceTaskbar)
+        {
+            used += (horizontal ? _moveA.Width : _moveA.Height) + pad;
+        }
+        foreach (var c in _quickItems)
+        {
+            used += (horizontal ? c.Width : c.Height) + pad;
+        }
+
+        // servono lo spazio per la nuova icona e per il tasto "+"
+        var need = used + ButtonSize + pad + _add.Width + pad;
+        var limit = horizontal
+            ? (Width - _start.Width) / 2 - pad
+            : (Height - _start.Height) / 2 - pad;
+        return need <= limit;
     }
 
     private void UpdateMoveGlyphs()
@@ -413,19 +533,16 @@ public sealed class BarForm : Form
         _alwaysVisible = on;
         ShowWindowsTaskbar(!on);   // nasconde/mostra la barra di Windows
 
+        // la visibilità delle frecce la decide LayoutControls in base a _replaceTaskbar
         if (on)
         {
             _side = Side.Bottom;
             Expand();
-            _moveA.Visible = false;
-            _moveB.Visible = false;
             TopMost = true;
         }
         else
         {
             _side = Side.Top;
-            _moveA.Visible = true;
-            _moveB.Visible = true;
             Collapse();
         }
     }
@@ -495,8 +612,9 @@ public sealed class BarForm : Form
             {
                 // niente icona: resta vuoto ma cliccabile
             }
-            _tips.SetToolTip(pb, Path.GetFileNameWithoutExtension(file));
+            _tips.SetToolTip(pb, Path.GetFileNameWithoutExtension(file) + "  (tasto destro: rimuovi)");
             pb.MouseClick += OnQuickItemClick;
+            HookDrop(pb); // si può rilasciare un file anche sopra un'icona esistente
             Controls.Add(pb);
             _quickItems.Add(pb);
         }
@@ -528,7 +646,7 @@ public sealed class BarForm : Form
         }
         else if (e.Button == MouseButtons.Right)
         {
-            var menu = new ContextMenuStrip();
+            var menu = BarMenuStyle.New();
             menu.Items.Add("Rimuovi dalla barra", null, (_, _) =>
             {
                 try { File.Delete(file); } catch { }
@@ -544,19 +662,40 @@ public sealed class BarForm : Form
 
     private void OnFileDrop(object? sender, DragEventArgs e)
     {
-        if (e.Data?.GetData(DataFormats.FileDrop) is string[] files)
+        _dragActive = false;
+        if (e.Data?.GetData(DataFormats.FileDrop) is not string[] files)
         {
-            foreach (var f in files)
+            return;
+        }
+
+        var full = false;
+        foreach (var f in files)
+        {
+            if (!HasRoomForQuickItem())
             {
-                AddShortcut(f);
+                full = true;
+                break;
             }
-            ReloadQuickItems();
+
+            AddShortcut(f);
+            ReloadQuickItems();  // ricarica subito: il prossimo controllo di spazio lo tiene conto
             LayoutControls();
+        }
+
+        if (full)
+        {
+            BarFullMessage();
         }
     }
 
     private void AddShortcutViaDialog()
     {
+        if (!HasRoomForQuickItem())
+        {
+            BarFullMessage();
+            return;
+        }
+
         _pinned++;
         try
         {
@@ -571,6 +710,24 @@ public sealed class BarForm : Form
                 ReloadQuickItems();
                 LayoutControls();
             }
+        }
+        finally
+        {
+            _pinned--;
+        }
+    }
+
+    private void BarFullMessage()
+    {
+        _pinned++;
+        try
+        {
+            MessageBox.Show(
+                "La barra è piena: gli avvii rapidi arrivano fino alla moneta.\n\n" +
+                "Per fare spazio rimuovi un'icona (tasto destro sull'icona → Rimuovi).",
+                "DesktopPager3D-OS",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
         finally
         {
@@ -679,7 +836,7 @@ public sealed class BarForm : Form
 
     // --- moneta Windows e menu di sistema ---------------------------------
 
-    private static Bitmap MakeWindowsCoin(int size)
+    private static Bitmap MakeTesseractCoin(int size)
     {
         var bmp = new Bitmap(size, size);
         using var g = Graphics.FromImage(bmp);
@@ -705,25 +862,51 @@ public sealed class BarForm : Form
             g.DrawEllipse(pen, rect);
         }
 
-        // logo Windows a 4 colori (stile Windows 7)
-        var s = size * 0.17f;
-        var gap = size * 0.05f;
-        var cx = size / 2f;
-        var cy = size / 2f;
-        Color[] cols =
+        // tesseratto (ipercubo): proiezione con cubo esterno, cubo interno e
+        // spigoli di collegamento; le 4 facce trapezoidali sono colorate
+        var s = size * 0.52f;      // lato del quadrato esterno
+        var o = (size - s) / 2f;   // origine, centrato sulla moneta
+        var m = s * 0.28f;         // rientro del cubo interno
+
+        PointF P(float x, float y) => new(o + x, o + y);
+        var oTL = P(0, 0);
+        var oTR = P(s, 0);
+        var oBR = P(s, s);
+        var oBL = P(0, s);
+        var iTL = P(m, m);
+        var iTR = P(s - m, m);
+        var iBR = P(s - m, s - m);
+        var iBL = P(m, s - m);
+
+        (PointF[] pts, Color col)[] faces =
         {
-            Color.FromArgb(0xE6, 0x3B, 0x2E), Color.FromArgb(0x6F, 0xBF, 0x2E),
-            Color.FromArgb(0x00, 0x9D, 0xE0), Color.FromArgb(0xF7, 0xB6, 0x00)
+            (new[] { oTL, oTR, iTR, iTL }, TesseractTop),
+            (new[] { oTR, oBR, iBR, iTR }, TesseractRight),
+            (new[] { oBR, oBL, iBL, iBR }, TesseractBottom),
+            (new[] { oBL, oTL, iTL, iBL }, TesseractLeft)
         };
-        (float x, float y)[] pos =
+        foreach (var (pts, col) in faces)
         {
-            (cx - s - gap / 2, cy - s - gap / 2), (cx + gap / 2, cy - s - gap / 2),
-            (cx - s - gap / 2, cy + gap / 2), (cx + gap / 2, cy + gap / 2)
-        };
-        for (var i = 0; i < 4; i++)
+            using var b = new SolidBrush(col);
+            g.FillPolygon(b, pts);
+        }
+
+        // cubo interno
+        var inner = new[] { iTL, iTR, iBR, iBL };
+        using (var b = new SolidBrush(TesseractCore))
         {
-            using var b = new SolidBrush(cols[i]);
-            g.FillRectangle(b, pos[i].x, pos[i].y, s, s);
+            g.FillPolygon(b, inner);
+        }
+
+        // spigoli del tesseratto
+        using (var pen = new Pen(TesseractEdge, Math.Max(1f, size / 44f)))
+        {
+            g.DrawPolygon(pen, new[] { oTL, oTR, oBR, oBL });
+            g.DrawPolygon(pen, inner);
+            g.DrawLine(pen, oTL, iTL);
+            g.DrawLine(pen, oTR, iTR);
+            g.DrawLine(pen, oBR, iBR);
+            g.DrawLine(pen, oBL, iBL);
         }
         return bmp;
     }
@@ -812,7 +995,7 @@ public sealed class BarForm : Form
 
     private void ShowTrayIconsMenu()
     {
-        var m = new ContextMenuStrip();
+        var m = BarMenuStyle.New();
         List<TrayIconReader.TrayEntry> entries;
         try
         {
@@ -879,7 +1062,7 @@ public sealed class BarForm : Form
 
     private void ShowOpenProgramsMenu()
     {
-        var m = new ContextMenuStrip();
+        var m = BarMenuStyle.New();
         var wins = EnumOpenWindows();
         if (wins.Count == 0)
         {
@@ -992,7 +1175,7 @@ public sealed class BarForm : Form
 
     private void ShowPowerMenu()
     {
-        var m = new ContextMenuStrip();
+        var m = BarMenuStyle.New();
         m.Items.Add("Sospendi", null, (_, _) => Suspend());
         m.Items.Add("Blocca", null, (_, _) => LockWorkStation());
         m.Items.Add("Disconnetti", null, (_, _) =>
@@ -1210,6 +1393,7 @@ public sealed class BarForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        BarStyle.Changed -= OnStyleChanged; // evento statico: non trattenere il form
         _watch.Stop();
         _clockTick.Stop();
         _statsTick.Stop();
