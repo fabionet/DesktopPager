@@ -37,6 +37,7 @@ public sealed class Shop3DWindow : Window
     private sealed record Entry(string Name, string FullPath, bool IsContainer);
 
     private const int MaxEntries = 48;
+    private const int ThumbPx = 128;   // texture delle anteprime
     // Stanza in stile labirinto: corridoio centrale libero fino all'uscita in
     // fondo, le cartelle sono porte-cubo incassate nelle pareti (una schiera a
     // sinistra e una a destra) e i file sono due schiere sospese davanti alle
@@ -50,8 +51,12 @@ public sealed class Shop3DWindow : Window
     private const double DoorOpenFull = 2.4;  // distanza a cui è spalancata
     private const double DoorEnter = 1.7;     // si entra nella cartella
     private const double SpacingZ = 4.8;   // passo delle schiere lungo il corridoio
-    private const double MoveSpeed = 0.13;
-    private const double TurnSpeed = 0.035; // radianti/tick
+    // ~30 fps invece di 60: dimezza il lavoro della GPU (su questo PC il 3D gira
+    // sulla Intel HD 3000, non sulla NVIDIA). Le velocità sono riscalate sul
+    // passo, così il movimento resta identico.
+    private const int TickMs = 33;
+    private const double MoveSpeed = 0.13 * TickMs / 16.0;
+    private const double TurnSpeed = 0.035 * TickMs / 16.0; // radianti/tick
 
     // rimpicciolimento dei banchi all'avvicinarsi (così restano leggibili per intero)
     private const double ShrinkNear = 3.0;   // sotto questa distanza scala minima
@@ -61,7 +66,7 @@ public sealed class Shop3DWindow : Window
     private readonly PerspectiveCamera _camera = new() { FieldOfView = 55 };
     private readonly Model3DGroup _root = new();
     private readonly Viewport3D _viewport = new();
-    private readonly DispatcherTimer _loop = new() { Interval = TimeSpan.FromMilliseconds(16) };
+    private readonly DispatcherTimer _loop = new() { Interval = TimeSpan.FromMilliseconds(TickMs) };
     private readonly HashSet<Key> _keys = new();
 
     private readonly TextBlock _pathLabel;
@@ -140,6 +145,12 @@ public sealed class Shop3DWindow : Window
         _camera.UpDirection = new Vector3D(0, 1, 0);
         _viewport.Camera = _camera;
         _viewport.Children.Add(new ModelVisual3D { Content = _root });
+
+        // Niente antialiasing sul 3D: WPF lo applica di suo e su GPU deboli
+        // (qui lo schermo è pilotato dalla Intel HD 3000) è il costo maggiore.
+        RenderOptions.SetEdgeMode(_viewport, EdgeMode.Aliased);
+        // le anteprime non vanno riscalate con qualità alta a ogni fotogramma
+        RenderOptions.SetBitmapScalingMode(_viewport, BitmapScalingMode.LowQuality);
 
         _pathLabel = Hud(20, FontWeights.SemiBold, HorizontalAlignment.Left, VerticalAlignment.Top,
             new Thickness(24, 18, 0, 0));
@@ -1172,7 +1183,9 @@ public sealed class Shop3DWindow : Window
                     var flags = isContainer
                         ? ThumbnailProvider.ThumbFlags.IconOnly
                         : ThumbnailProvider.ThumbFlags.ResizeToFit;
-                    using var bmp = ThumbnailProvider.GetThumbnail(path, 256, flags);
+                    // 128 e non 256: su questo PC la VRAM è RAM di sistema
+                    // condivisa, e a schermo il pannello è comunque piccolo
+                    using var bmp = ThumbnailProvider.GetThumbnail(path, ThumbPx, flags);
                     if (bmp is not null)
                     {
                         src = ToBitmapSource(bmp); // già freezato: attraversa i thread
