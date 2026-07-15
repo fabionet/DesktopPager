@@ -37,7 +37,10 @@ public sealed class Shop3DWindow : Window
     private sealed record Entry(string Name, string FullPath, bool IsContainer);
 
     private const int MaxEntries = 48;
-    private const int Columns = 5;
+    // I banchi stanno in due gruppi ai lati: il corridoio centrale resta libero
+    // perché in fondo, al centro, c'è la porta di uscita.
+    private const int GroupColumns = 3;       // colonne per ciascun gruppo laterale
+    private const double CorridorHalf = 3.0;  // mezza larghezza del corridoio centrale
     private const double SpacingX = 4.4;
     private const double SpacingZ = 4.8;
     private const double MoveSpeed = 0.13;
@@ -767,8 +770,12 @@ public sealed class Shop3DWindow : Window
         lights.Children.Add(new DirectionalLight(Color.FromRgb(210, 210, 220), new Vector3D(-0.4, -1, -0.5)));
         _root.Children.Add(lights);
 
-        var rows = Math.Max(1, (int)Math.Ceiling(_entries.Count / (double)Columns));
-        _roomHalfW = Columns * SpacingX / 2 + 2.5;
+        // metà per lato (la sinistra prende l'eventuale dispari); le righe sono
+        // quelle del gruppo più numeroso
+        var leftCount = (_entries.Count + 1) / 2;
+        var rows = Math.Max(1, (int)Math.Ceiling(
+            Math.Max(leftCount, _entries.Count - leftCount) / (double)GroupColumns));
+        _roomHalfW = CorridorHalf + (GroupColumns - 0.5) * SpacingX + 2.5;
         _roomBackZ = -(rows * SpacingZ) - 2.5;
         const double frontZ = 12.5;
         const double wallH = 5.0;
@@ -797,9 +804,13 @@ public sealed class Shop3DWindow : Window
         var pedestalMat = new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(44, 46, 58)));
         for (var i = 0; i < _entries.Count; i++)
         {
-            var col = i % Columns;
-            var row = i / Columns;
-            var x = (col - (Columns - 1) / 2.0) * SpacingX;
+            // gruppo di sinistra o di destra; dentro al gruppo le colonne si
+            // riempiono dal corridoio verso l'esterno
+            var isLeft = i < leftCount;
+            var k = isLeft ? i : i - leftCount;
+            var col = k % GroupColumns;
+            var row = k / GroupColumns;
+            var x = (CorridorHalf + 0.5 * SpacingX + col * SpacingX) * (isLeft ? -1 : 1);
             var z = -2.0 - row * SpacingZ;
             _boothPos.Add(new Point3D(x, 0, z));
 
