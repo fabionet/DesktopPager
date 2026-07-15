@@ -10,6 +10,7 @@ using System.Windows.Threading;
 using WpfRectangle = System.Windows.Shapes.Rectangle;
 using WpfPolygon = System.Windows.Shapes.Polygon;
 using WpfPath = System.Windows.Shapes.Path;
+using WpfImage = System.Windows.Controls.Image;
 using Drawing = System.Drawing;
 using DrawingImaging = System.Drawing.Imaging;
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
@@ -67,6 +68,21 @@ public sealed class Shop3DWindow : Window
     private double _px, _pz, _yaw;
     private double _roomHalfW, _roomBackZ;
 
+    // porta di uscita: un tesseratto sulla parete di fondo che si apre
+    // avvicinandosi, oltre il quale si vede il desktop; entrandoci parte uno
+    // zoom che riporta al desktop reale
+    private const double ExitDoorSize = 3.2;
+    private const double ExitOpenStart = 7.0;  // distanza a cui inizia ad aprirsi
+    private const double ExitOpenFull = 3.0;   // distanza a cui è spalancata
+    private const double ExitTrigger = 2.0;    // si attraversa il varco
+
+    private BitmapSource? _desktopShot;
+    private readonly Model3DGroup?[] _exitPanels = new Model3DGroup?[4];
+    private Model3DGroup? _exitCore;
+    private readonly WpfImage _exitZoom = new();
+    private double _exitDoorZ, _exitBaseY;
+    private bool _exiting;
+
     // ingresso cinematografico: schermo nero, tesseratto (ipercubo) colorato
     // che si apre come una porta, con barra di avanzamento del caricamento
     private readonly Grid _rootGrid = new();
@@ -103,7 +119,25 @@ public sealed class Shop3DWindow : Window
         var hint = Hud(12, FontWeights.Normal, HorizontalAlignment.Center, VerticalAlignment.Bottom,
             new Thickness(0, 0, 0, 22));
         hint.Foreground = new SolidColorBrush(Color.FromRgb(150, 150, 165));
-        hint.Text = "frecce / WASD = muoviti e gira   •   Invio = entra o apri   •   Backspace = indietro   •   Esc = esci";
+        hint.Text = "frecce / WASD = muoviti e gira   •   Invio = entra o apri   •   Backspace = indietro   •   "
+                    + "porta in fondo o Esc = torna al desktop";
+
+        // istantanea del desktop PRIMA che questa finestra lo copra: è ciò che
+        // si vedrà oltre la porta di uscita e nello zoom finale
+        try
+        {
+            _desktopShot = DesktopEffects.Capture.Screen(0, 0,
+                Math.Max(1, (int)SystemParameters.PrimaryScreenWidth),
+                Math.Max(1, (int)SystemParameters.PrimaryScreenHeight));
+        }
+        catch
+        {
+            _desktopShot = null; // senza istantanea la porta resta chiusa: si esce con Esc
+        }
+
+        _exitZoom.Stretch = Stretch.Fill;
+        _exitZoom.Visibility = Visibility.Collapsed;
+        _exitZoom.IsHitTestVisible = false;
 
         _rootGrid.Children.Add(_viewport);
         _rootGrid.Children.Add(_pathLabel);
@@ -111,11 +145,15 @@ public sealed class Shop3DWindow : Window
         _rootGrid.Children.Add(hint);
         BuildIntroOverlays();
         _rootGrid.Children.Add(_loadingOverlay);
+        _rootGrid.Children.Add(_exitZoom);
         Content = _rootGrid;
 
+        Focusable = true;
         _loop.Tick += (_, _) => Tick();
-        Loaded += (_, _) => { Activate(); Focus(); Navigate(null); PlayIntro(); };
-        KeyDown += OnKeyDown;
+        Loaded += (_, _) => { GrabFocus(); Navigate(null); PlayIntro(); };
+        // PreviewKeyDown: i tasti arrivano comunque, anche se il focus finisce
+        // su un elemento figlio
+        PreviewKeyDown += OnKeyDown;
         KeyUp += (_, e) => _keys.Remove(e.Key);
         MouseLeftButtonUp += OnClick;
         Closed += (_, _) => _loop.Stop();
@@ -369,13 +407,39 @@ public sealed class Shop3DWindow : Window
 
     // --- input ------------------------------------------------------------
 
+    /// <summary>
+    /// Porta davvero il focus di tastiera a questa finestra: la barra e la tray
+    /// sono tool-window sempre in primo piano e l'attivazione può restare a
+    /// loro, lasciando la vista 3D senza tastiera (Esc compreso).
+    /// </summary>
+    private void GrabFocus()
+    {
+        try
+        {
+            Activate();
+            Focus();
+            System.Windows.Input.Keyboard.Focus(this);
+        }
+        catch
+        {
+            // se l'attivazione viene negata restano mouse e porta di uscita
+        }
+    }
+
     private void OnKeyDown(object sender, WpfKeyEventArgs e)
     {
         if (e.Key == Key.Escape)
         {
+            e.Handled = true;
+            if (_exiting) { return; }
             if (!_introDone) { FinishIntro(); return; } // salta l'intro
             Close();
             return;
+        }
+
+        if (_exiting)
+        {
+            return; // durante lo zoom di uscita i comandi sono bloccati
         }
 
         if (!_introDone)
@@ -393,7 +457,7 @@ public sealed class Shop3DWindow : Window
 
     private void Tick()
     {
-        if (!_introDone)
+        if (!_introDone || _exiting)
         {
             return;
         }
@@ -417,6 +481,79 @@ public sealed class Shop3DWindow : Window
 
         UpdateBoothScale();
         UpdateFocus();
+        UpdateExitDoor();
+    }
+
+    /// <summary>
+    /// La porta di uscita si apre man mano che ci si avvicina: le 4 facce
+    /// scorrono ciascuna verso il proprio lato e il cubo interno si richiude,
+    /// scoprendo il desktop. Attraversando il varco parte lo zoom di uscita.
+    /// </summary>
+    private void UpdateExitDoor()
+    {
+        if (_exitCore is null)
+        {
+            return;
+        }
+
+        var dx = _px;                 // la porta è centrata su x = 0
+        var dz = _pz - _exitDoorZ;
+        var dist = Math.Sqrt(dx * dx + dz * dz);
+
+        double open;
+        if (dist >= ExitOpenStart) open = 0;
+        else if (dist <= ExitOpenFull) open = 1;
+        else open = (ExitOpenStart - dist) / (ExitOpenStart - ExitOpenFull);
+
+        // ogni faccia esce dal proprio lato, come nell'intro
+        var slide = open * ExitDoorSize * 1.05;
+        (double x, double y)[] dir = { (0, slide), (slide, 0), (0, -slide), (-slide, 0) };
+        for (var i = 0; i < 4; i++)
+        {
+            if (_exitPanels[i] is { } panel)
+            {
+                panel.Transform = new TranslateTransform3D(dir[i].x, dir[i].y, 0);
+            }
+        }
+
+        var cs = Math.Max(0.001, 1 - open);
+        _exitCore.Transform = new ScaleTransform3D(cs, cs, 1, 0, _exitBaseY, _exitDoorZ);
+
+        if (dist <= ExitTrigger && open >= 0.98)
+        {
+            StartExitZoom();
+        }
+    }
+
+    /// <summary>Zoom sull'immagine del desktop, poi chiude: si torna al desktop reale.</summary>
+    private void StartExitZoom()
+    {
+        if (_exiting)
+        {
+            return;
+        }
+        _exiting = true;
+        _keys.Clear();
+
+        if (_desktopShot is null)
+        {
+            Close();
+            return;
+        }
+
+        _exitZoom.Source = _desktopShot;
+        _exitZoom.Opacity = 0;
+        _exitZoom.RenderTransformOrigin = new Point(0.5, 0.5);
+        var st = new ScaleTransform(0.3, 0.3);
+        _exitZoom.RenderTransform = st;
+        _exitZoom.Visibility = Visibility.Visible;
+
+        var ease = new CubicEase { EasingMode = EasingMode.EaseIn };
+        var dur = TimeSpan.FromMilliseconds(700);
+        st.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.3, 1, dur) { EasingFunction = ease });
+        st.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.3, 1, dur) { EasingFunction = ease });
+        _exitZoom.BeginAnimation(OpacityProperty, Fade(0, 1, 400));
+        After(780, Close);
     }
 
     // I banchi vicini si rimpiccioliscono per restare leggibili per intero.
@@ -478,7 +615,13 @@ public sealed class Shop3DWindow : Window
 
     private void OnClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
-        if (!_introDone)
+        // un clic sulla vista riporta qui il focus: da qui in poi Esc funziona
+        if (!IsKeyboardFocusWithin)
+        {
+            GrabFocus();
+        }
+
+        if (!_introDone || _exiting)
         {
             return;
         }
@@ -693,6 +836,101 @@ public sealed class Shop3DWindow : Window
         var ring = new EmissiveMaterial(new SolidColorBrush(Color.FromArgb(180, accent.R, accent.G, accent.B)));
         _focusRing = Box(1.7, 0.06, 1.1, 0, -100, 0, ring);
         _root.Children.Add(_focusRing);
+
+        BuildExitDoor();
+    }
+
+    /// <summary>
+    /// Porta di uscita a forma di tesseratto sulla parete di fondo: dietro c'è
+    /// l'istantanea del desktop, davanti le 4 facce trapezoidali e il cubo
+    /// interno che la coprono. Avvicinandosi le facce scorrono via e il cubo si
+    /// richiude su sé stesso, scoprendo il desktop (vedi UpdateExitDoor).
+    /// </summary>
+    private void BuildExitDoor()
+    {
+        for (var i = 0; i < 4; i++)
+        {
+            _exitPanels[i] = null;
+        }
+        _exitCore = null;
+
+        if (_desktopShot is null)
+        {
+            return; // senza istantanea niente porta: si esce con Esc
+        }
+
+        const double s = ExitDoorSize;
+        const double half = s / 2;
+        const double m = s * 0.28;
+        _exitDoorZ = _roomBackZ + 0.3;
+        _exitBaseY = half + 0.05;              // appoggiata al pavimento
+        var y0 = _exitBaseY - half;
+        var y1 = _exitBaseY + half;
+        var z = _exitDoorZ;
+
+        // il varco: il desktop, dietro al tesseratto. Emissivo così non viene
+        // spento dalle luci della stanza; UniformToFill per non schiacciare il 16:9
+        _root.Children.Add(Quad(s, s, 0, _exitBaseY, z - 0.04,
+            new EmissiveMaterial(new ImageBrush(_desktopShot) { Stretch = Stretch.UniformToFill }),
+            facePlusZ: true));
+
+        Point3D P(double x, double y) => new(x, y, z);
+        var oTL = P(-half, y1);
+        var oTR = P(half, y1);
+        var oBR = P(half, y0);
+        var oBL = P(-half, y0);
+        var iTL = P(-half + m, y1 - m);
+        var iTR = P(half - m, y1 - m);
+        var iBR = P(half - m, y0 + m);
+        var iBL = P(-half + m, y0 + m);
+
+        (Point3D a, Point3D b, Point3D c, Point3D d, (byte R, byte G, byte B) col)[] faces =
+        {
+            (oTL, oTR, iTR, iTL, TesseractPalette.Top),
+            (oTR, oBR, iBR, iTR, TesseractPalette.Right),
+            (oBR, oBL, iBL, iBR, TesseractPalette.Bottom),
+            (oBL, oTL, iTL, iBL, TesseractPalette.Left)
+        };
+        // ATTENZIONE: le ante devono essere DiffuseMaterial (opache). Con
+        // EmissiveMaterial si sommerebbero al desktop che sta dietro e i colori
+        // uscirebbero falsati (rosso+blu = rosa, ecc.).
+        for (var i = 0; i < 4; i++)
+        {
+            var f = faces[i];
+            var panel = new Model3DGroup();
+            panel.Children.Add(Poly4(f.a, f.b, f.c, f.d,
+                new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(f.col.R, f.col.G, f.col.B)))));
+            panel.Transform = new TranslateTransform3D(0, 0, 0);
+            _exitPanels[i] = panel;
+            _root.Children.Add(panel);
+        }
+
+        var core = new Model3DGroup();
+        core.Children.Add(Poly4(iTL, iTR, iBR, iBL,
+            new DiffuseMaterial(new SolidColorBrush(
+                Color.FromRgb(TesseractPalette.Core.R, TesseractPalette.Core.G, TesseractPalette.Core.B)))));
+        core.Transform = new ScaleTransform3D(1, 1, 1, 0, _exitBaseY, z);
+        _exitCore = core;
+        _root.Children.Add(core);
+    }
+
+    /// <summary>Quadrilatero 3D da 4 punti arbitrari (visibile da entrambi i lati).</summary>
+    private static GeometryModel3D Poly4(Point3D a, Point3D b, Point3D c, Point3D d, Material mat)
+    {
+        var mesh = new MeshGeometry3D();
+        mesh.Positions.Add(a);
+        mesh.Positions.Add(b);
+        mesh.Positions.Add(c);
+        mesh.Positions.Add(d);
+        // stesso avvolgimento di Quad(facePlusZ): normali verso +Z, così le
+        // luci della stanza illuminano la faccia rivolta a chi guarda
+        mesh.TriangleIndices.Add(0);
+        mesh.TriangleIndices.Add(2);
+        mesh.TriangleIndices.Add(1);
+        mesh.TriangleIndices.Add(0);
+        mesh.TriangleIndices.Add(3);
+        mesh.TriangleIndices.Add(2);
+        return new GeometryModel3D(mesh, mat) { BackMaterial = mat };
     }
 
     private (ImageBrush brush, double aspect)? LoadBrush(Entry e)

@@ -39,7 +39,10 @@ Resta residente in memoria con un'icona nell'area di notifica.
 - Esplorazione in prima persona di dischi e cartelle come dentro un negozio, con
   un ingresso cinematografico (caricamento → il tesseratto colorato si apre come una
   porta a 4 parti → vista dall'alto → atterraggio). Movimento frecce/WASD, Invio o clic per
-  entrare/aprire, Backspace per risalire, Esc per uscire.
+  entrare/aprire, Backspace per risalire.
+- **Uscita**: in fondo a ogni stanza c'è una **porta-tesseratto** che si apre man mano
+  che ti avvicini, scoprendo il desktop oltre il varco; attraversandola parte uno zoom
+  che ti riporta al desktop. In alternativa, `Esc`.
 
 **Effetti desktop 3D** (opzionali, di default spenti)
 - 🧊 **Cubo del desktop**: tieni **Ctrl + tasto destro** e trascina sul desktop per
@@ -158,11 +161,14 @@ operativo/dei relativi handler e restano di proprietà dei rispettivi titolari.
 
 ### Marchi
 
+L'emblema di DesktopPager3D-OS — la moneta della barra, la porta dell'intro 3D e
+la porta di uscita — è un **tesseratto** (ipercubo) di **disegno originale**.
+**Il logo Windows non è più utilizzato in alcun punto del programma**: nessun
+elemento grafico riproduce o imita marchi figurativi Microsoft.
+
 **Windows®** e **Segoe®** sono marchi registrati di **Microsoft Corporation**.
 Questo progetto è un'iniziativa **indipendente**, **non è affiliato, sponsorizzato
-né approvato da Microsoft**. I riferimenti a Windows hanno scopo puramente
-descrittivo e di interoperabilità con il sistema operativo.
-
-L'emblema di DesktopPager3D-OS (la moneta della barra e la porta dell'intro 3D) è
-un **tesseratto** (ipercubo) di **disegno originale**: non riproduce né imita il
-logo Windows. Tutti gli altri marchi citati appartengono ai rispettivi titolari.
+né approvato da Microsoft**. Il nome «Windows» compare solo con scopo descrittivo
+e di interoperabilità (l'app gira su Windows e ne usa API, font e icone di
+sistema, elencati nella tabella qui sopra). Tutti gli altri marchi citati
+appartengono ai rispettivi titolari.
