@@ -37,8 +37,8 @@ Resta residente in memoria con un'icona nell'area di notifica.
 
 **Vista 3D Game** 🎮
 - Esplorazione in prima persona di dischi e cartelle come dentro un negozio, con
-  un ingresso cinematografico (caricamento → porta bianca a 4 parti in stile logo
-  Windows → vista dall'alto → atterraggio). Movimento frecce/WASD, Invio o clic per
+  un ingresso cinematografico (caricamento → il tesseratto colorato si apre come una
+  porta a 4 parti → vista dall'alto → atterraggio). Movimento frecce/WASD, Invio o clic per
   entrare/aprire, Backspace per risalire, Esc per uscire.
 
 **Effetti desktop 3D** (opzionali, di default spenti)
@@ -158,9 +158,11 @@ operativo/dei relativi handler e restano di proprietà dei rispettivi titolari.
 
 ### Marchi
 
-**Windows®**, il **logo Windows** (l'emblema a quattro colori) e **Segoe®** sono
-marchi registrati di **Microsoft Corporation**. Questo progetto è un'iniziativa
-**indipendente**, **non è affiliato, sponsorizzato né approvato da Microsoft**.
-I riferimenti a Windows e l'uso di elementi grafici in stile Windows hanno scopo
-puramente descrittivo/di interoperabilità con il sistema operativo. Tutti gli
-altri marchi citati appartengono ai rispettivi titolari.
+**Windows®** e **Segoe®** sono marchi registrati di **Microsoft Corporation**.
+Questo progetto è un'iniziativa **indipendente**, **non è affiliato, sponsorizzato
+né approvato da Microsoft**. I riferimenti a Windows hanno scopo puramente
+descrittivo e di interoperabilità con il sistema operativo.
+
+L'emblema di DesktopPager3D-OS (la moneta della barra e la porta dell'intro 3D) è
+un **tesseratto** (ipercubo) di **disegno originale**: non riproduce né imita il
+logo Windows. Tutti gli altri marchi citati appartengono ai rispettivi titolari.

@@ -33,6 +33,15 @@ public sealed class BarForm : Form
     private static readonly Color BarShadow = BarStyle.Shadow;
     private static readonly Color BarText = BarStyle.Text;
 
+    // emblema tesseratto della moneta (palette condivisa con l'intro 3D)
+    private static Color Rgb((byte R, byte G, byte B) c) => Color.FromArgb(c.R, c.G, c.B);
+    private static readonly Color TesseractTop = Rgb(TesseractPalette.Top);
+    private static readonly Color TesseractRight = Rgb(TesseractPalette.Right);
+    private static readonly Color TesseractBottom = Rgb(TesseractPalette.Bottom);
+    private static readonly Color TesseractLeft = Rgb(TesseractPalette.Left);
+    private static readonly Color TesseractCore = Rgb(TesseractPalette.Core);
+    private static readonly Color TesseractEdge = Rgb(TesseractPalette.Edge);
+
     private Side _side = Side.Top;
     private bool _expanded;
     private bool _replaceTaskbar;   // sostituisce la barra di Windows
@@ -110,7 +119,7 @@ public sealed class BarForm : Form
         _apps.Click += (_, _) => ShowOpenProgramsMenu();
         _power.Click += (_, _) => ShowPowerMenu();
         _tray.Click += (_, _) => ShowTrayIconsMenu();
-        _start.Coin = MakeWindowsCoin(StartSize * 2);
+        _start.Coin = MakeTesseractCoin(StartSize * 2);
         _start.Activated += ShowStartMenu; // dopo l'animazione di "giro" della moneta
         _net.Click += (_, _) => LaunchControl("ncpa.cpl");
 
@@ -679,7 +688,7 @@ public sealed class BarForm : Form
 
     // --- moneta Windows e menu di sistema ---------------------------------
 
-    private static Bitmap MakeWindowsCoin(int size)
+    private static Bitmap MakeTesseractCoin(int size)
     {
         var bmp = new Bitmap(size, size);
         using var g = Graphics.FromImage(bmp);
@@ -705,25 +714,51 @@ public sealed class BarForm : Form
             g.DrawEllipse(pen, rect);
         }
 
-        // logo Windows a 4 colori (stile Windows 7)
-        var s = size * 0.17f;
-        var gap = size * 0.05f;
-        var cx = size / 2f;
-        var cy = size / 2f;
-        Color[] cols =
+        // tesseratto (ipercubo): proiezione con cubo esterno, cubo interno e
+        // spigoli di collegamento; le 4 facce trapezoidali sono colorate
+        var s = size * 0.52f;      // lato del quadrato esterno
+        var o = (size - s) / 2f;   // origine, centrato sulla moneta
+        var m = s * 0.28f;         // rientro del cubo interno
+
+        PointF P(float x, float y) => new(o + x, o + y);
+        var oTL = P(0, 0);
+        var oTR = P(s, 0);
+        var oBR = P(s, s);
+        var oBL = P(0, s);
+        var iTL = P(m, m);
+        var iTR = P(s - m, m);
+        var iBR = P(s - m, s - m);
+        var iBL = P(m, s - m);
+
+        (PointF[] pts, Color col)[] faces =
         {
-            Color.FromArgb(0xE6, 0x3B, 0x2E), Color.FromArgb(0x6F, 0xBF, 0x2E),
-            Color.FromArgb(0x00, 0x9D, 0xE0), Color.FromArgb(0xF7, 0xB6, 0x00)
+            (new[] { oTL, oTR, iTR, iTL }, TesseractTop),
+            (new[] { oTR, oBR, iBR, iTR }, TesseractRight),
+            (new[] { oBR, oBL, iBL, iBR }, TesseractBottom),
+            (new[] { oBL, oTL, iTL, iBL }, TesseractLeft)
         };
-        (float x, float y)[] pos =
+        foreach (var (pts, col) in faces)
         {
-            (cx - s - gap / 2, cy - s - gap / 2), (cx + gap / 2, cy - s - gap / 2),
-            (cx - s - gap / 2, cy + gap / 2), (cx + gap / 2, cy + gap / 2)
-        };
-        for (var i = 0; i < 4; i++)
+            using var b = new SolidBrush(col);
+            g.FillPolygon(b, pts);
+        }
+
+        // cubo interno
+        var inner = new[] { iTL, iTR, iBR, iBL };
+        using (var b = new SolidBrush(TesseractCore))
         {
-            using var b = new SolidBrush(cols[i]);
-            g.FillRectangle(b, pos[i].x, pos[i].y, s, s);
+            g.FillPolygon(b, inner);
+        }
+
+        // spigoli del tesseratto
+        using (var pen = new Pen(TesseractEdge, Math.Max(1f, size / 44f)))
+        {
+            g.DrawPolygon(pen, new[] { oTL, oTR, oBR, oBL });
+            g.DrawPolygon(pen, inner);
+            g.DrawLine(pen, oTL, iTL);
+            g.DrawLine(pen, oTR, iTR);
+            g.DrawLine(pen, oBR, iBR);
+            g.DrawLine(pen, oBL, iBL);
         }
         return bmp;
     }

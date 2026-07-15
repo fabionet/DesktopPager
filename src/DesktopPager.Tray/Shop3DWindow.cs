@@ -8,6 +8,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Media.Media3D;
 using System.Windows.Threading;
 using WpfRectangle = System.Windows.Shapes.Rectangle;
+using WpfPolygon = System.Windows.Shapes.Polygon;
 using WpfPath = System.Windows.Shapes.Path;
 using Drawing = System.Drawing;
 using DrawingImaging = System.Drawing.Imaging;
@@ -66,12 +67,13 @@ public sealed class Shop3DWindow : Window
     private double _px, _pz, _yaw;
     private double _roomHalfW, _roomBackZ;
 
-    // ingresso cinematografico: schermo nero, logo Windows a 4 colori che si
-    // apre come una porta, con barra di avanzamento del caricamento
+    // ingresso cinematografico: schermo nero, tesseratto (ipercubo) colorato
+    // che si apre come una porta, con barra di avanzamento del caricamento
     private readonly Grid _rootGrid = new();
     private readonly Grid _loadingOverlay = new();
     private readonly Canvas _logoCanvas = new();
-    private readonly WpfRectangle[] _logoPanes = new WpfRectangle[4];
+    private readonly WpfPolygon[] _logoPanes = new WpfPolygon[4]; // facce trapezoidali
+    private WpfPolygon? _logoCore;                                 // cubo interno
     private readonly WpfRectangle _progressFill = new();
     private const double ProgressWidth = 340;
     private bool _introDone;
@@ -139,8 +141,10 @@ public sealed class Shop3DWindow : Window
 
     // --- ingresso cinematografico -----------------------------------------
 
-    private const double LogoPane = 84;   // lato di un pannello del logo
-    private const double LogoGap = 10;     // fuga tra i pannelli
+    private const double LogoSize = 178;   // lato del quadrato esterno del tesseratto
+    private const double LogoInset = 50;   // rientro del cubo interno
+
+    private static Color Rgb((byte R, byte G, byte B) c) => Color.FromRgb(c.R, c.G, c.B);
 
     private void BuildIntroOverlays()
     {
@@ -148,43 +152,61 @@ public sealed class Shop3DWindow : Window
         _loadingOverlay.Background = System.Windows.Media.Brushes.Black;
         _loadingOverlay.Visibility = Visibility.Collapsed;
 
-        // logo Windows a 4 colori (stile Windows 7), centrato, che si apre come una porta
-        var logoSize = LogoPane * 2 + LogoGap;
-        _logoCanvas.Width = logoSize;
-        _logoCanvas.Height = logoSize;
+        // tesseratto (ipercubo) colorato, centrato: cubo esterno + cubo interno
+        // + spigoli di collegamento. Le 4 facce trapezoidali sono i battenti
+        // della "porta" che si apre.
+        _logoCanvas.Width = LogoSize;
+        _logoCanvas.Height = LogoSize;
         _logoCanvas.HorizontalAlignment = HorizontalAlignment.Center;
         _logoCanvas.VerticalAlignment = VerticalAlignment.Center;
         _logoCanvas.Margin = new Thickness(0, 0, 0, 90);
 
-        Color[] cols =
+        const double s = LogoSize;
+        const double m = LogoInset;
+        var oTL = new Point(0, 0);
+        var oTR = new Point(s, 0);
+        var oBR = new Point(s, s);
+        var oBL = new Point(0, s);
+        var iTL = new Point(m, m);
+        var iTR = new Point(s - m, m);
+        var iBR = new Point(s - m, s - m);
+        var iBL = new Point(m, s - m);
+
+        // su fondo nero gli spigoli chiari fanno risaltare il reticolo
+        var edge = new SolidColorBrush(Color.FromRgb(0xF2, 0xF5, 0xFF));
+
+        (Point[] pts, Color col)[] faces =
         {
-            Color.FromRgb(0xE6, 0x3B, 0x2E), // rosso  (alto-sx)
-            Color.FromRgb(0x6F, 0xBF, 0x2E), // verde  (alto-dx)
-            Color.FromRgb(0x00, 0x9D, 0xE0), // blu    (basso-sx)
-            Color.FromRgb(0xF7, 0xB6, 0x00)  // giallo (basso-dx)
-        };
-        (double x, double y)[] pos =
-        {
-            (0, 0), (LogoPane + LogoGap, 0),
-            (0, LogoPane + LogoGap), (LogoPane + LogoGap, LogoPane + LogoGap)
+            (new[] { oTL, oTR, iTR, iTL }, Rgb(TesseractPalette.Top)),
+            (new[] { oTR, oBR, iBR, iTR }, Rgb(TesseractPalette.Right)),
+            (new[] { oBR, oBL, iBL, iBR }, Rgb(TesseractPalette.Bottom)),
+            (new[] { oBL, oTL, iTL, iBL }, Rgb(TesseractPalette.Left))
         };
         for (var i = 0; i < 4; i++)
         {
-            var pane = new WpfRectangle
+            var pane = new WpfPolygon
             {
-                Width = LogoPane,
-                Height = LogoPane,
-                RadiusX = 8,
-                RadiusY = 8,
-                Fill = new SolidColorBrush(cols[i]),
-                RenderTransform = new TranslateTransform(),
-                RenderTransformOrigin = new Point(0.5, 0.5)
+                Points = new PointCollection(faces[i].pts),
+                Fill = new SolidColorBrush(faces[i].col),
+                Stroke = edge,
+                StrokeThickness = 2.5,
+                RenderTransform = new TranslateTransform()
             };
             _logoPanes[i] = pane;
-            Canvas.SetLeft(pane, pos[i].x);
-            Canvas.SetTop(pane, pos[i].y);
             _logoCanvas.Children.Add(pane);
         }
+
+        // cubo interno: resta fermo mentre i battenti si aprono, poi vola
+        // verso lo spettatore (si attraversa l'ipercubo)
+        _logoCore = new WpfPolygon
+        {
+            Points = new PointCollection(new[] { iTL, iTR, iBR, iBL }),
+            Fill = new SolidColorBrush(Rgb(TesseractPalette.Core)),
+            Stroke = edge,
+            StrokeThickness = 2.5,
+            RenderTransform = new ScaleTransform(1, 1, s / 2, s / 2)
+        };
+        _logoCanvas.Children.Add(_logoCore);
 
         // barra di avanzamento sotto il logo
         var track = new System.Windows.Controls.Border
@@ -229,13 +251,25 @@ public sealed class Shop3DWindow : Window
         _camera.Position = new Point3D(0, 15, -1);
         _camera.LookDirection = new Vector3D(0, -1, -0.18);
 
-        // reset logo e barra
+        // reset tesseratto e barra
         foreach (var pane in _logoPanes)
         {
             pane.Opacity = 1;
             var t = (TranslateTransform)pane.RenderTransform;
+            t.BeginAnimation(TranslateTransform.XProperty, null);
+            t.BeginAnimation(TranslateTransform.YProperty, null);
             t.X = 0;
             t.Y = 0;
+        }
+        if (_logoCore is not null)
+        {
+            _logoCore.Opacity = 1;
+            _logoCore.BeginAnimation(OpacityProperty, null);
+            var cs = (ScaleTransform)_logoCore.RenderTransform;
+            cs.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            cs.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            cs.ScaleX = 1;
+            cs.ScaleY = 1;
         }
         _progressFill.Width = 0;
         _loadingOverlay.Opacity = 1;
@@ -268,15 +302,26 @@ public sealed class Shop3DWindow : Window
         var dur = TimeSpan.FromMilliseconds(1600);
         var ease = new CubicEase { EasingMode = EasingMode.EaseIn };
         var spread = Math.Max(ActualWidth, ActualHeight);
+
+        // ogni faccia trapezoidale esce dal proprio lato (alto/destra/basso/sinistra)
         (double dx, double dy)[] dir =
         {
-            (-spread, -spread), (spread, -spread), (-spread, spread), (spread, spread)
+            (0, -spread), (spread, 0), (0, spread), (-spread, 0)
         };
         for (var i = 0; i < 4; i++)
         {
             var t = (TranslateTransform)_logoPanes[i].RenderTransform;
             t.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0, dir[i].dx, dur) { EasingFunction = ease });
             t.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, dir[i].dy, dur) { EasingFunction = ease });
+        }
+
+        // il cubo interno ingrandisce fino ad avvolgere lo spettatore e svanisce
+        if (_logoCore is not null)
+        {
+            var cs = (ScaleTransform)_logoCore.RenderTransform;
+            cs.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, 9, dur) { EasingFunction = ease });
+            cs.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1, 9, dur) { EasingFunction = ease });
+            _logoCore.BeginAnimation(OpacityProperty, Fade(1, 0, 1300));
         }
     }
 
