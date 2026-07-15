@@ -58,7 +58,7 @@ Resta residente in memoria con un'icona nell'area di notifica.
 
 ## Installazione (utente finale)
 
-1. Scarica `DesktopPager3D-OS-1.1.0-Setup.msi` dalla pagina
+1. Scarica `DesktopPager3D-OS-1.2.0-Setup.msi` dalla pagina
    [Releases](https://github.com/fabionet/DesktopPager3D-OS/releases).
 2. Doppio clic sull'MSI e segui la procedura guidata (richiede i privilegi di
    amministratore perché installa in `C:\Program Files\DesktopPager3D-OS`).
