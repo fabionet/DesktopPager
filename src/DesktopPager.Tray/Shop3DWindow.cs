@@ -81,12 +81,20 @@ public sealed class Shop3DWindow : Window
     }
 
     private readonly List<FolderDoor> _folderDoors = new();
+
+    // Anteprime caricate in sottofondo: la shell può metterci più di un secondo
+    // per UNA cartella (compone il contenuto nell'icona), quindi la stanza si
+    // costruisce subito con un segnaposto e le immagini arrivano dopo.
+    private readonly List<(int Entry, GeometryModel3D Model)> _pendingThumbs = new();
+    private int _thumbGeneration; // cambia a ogni stanza: annulla i caricamenti vecchi
     private readonly Dictionary<GeometryModel3D, int> _modelToEntry = new();
     private GeometryModel3D? _focusRing;
 
     private string? _current;    // null = "Questo PC"
     private int _focus = -1;
     private double _px, _pz, _yaw;
+    private double _lastPx, _lastPz, _lastYaw; // ultimo stato applicato: da fermi si salta il giro
+    private bool _settled;
     private double _roomHalfW, _roomBackZ;
 
     // porta di uscita: un tesseratto sulla parete di fondo che si apre
@@ -497,6 +505,19 @@ public sealed class Shop3DWindow : Window
         _px = Math.Clamp(_px, -_roomHalfW + 1, _roomHalfW - 1);
         _pz = Math.Clamp(_pz, _roomBackZ + 1.2, 11);
 
+        // Da fermi non cambia nulla: banchi, messa a fuoco e porte dipendono
+        // solo dalla posizione. Saltare il giro evita di sporcare l'albero di
+        // rendering 60 volte al secondo per niente.
+        if (_settled && _px == _lastPx && _pz == _lastPz && _yaw == _lastYaw)
+        {
+            return;
+        }
+
+        _lastPx = _px;
+        _lastPz = _pz;
+        _lastYaw = _yaw;
+        _settled = true;
+
         _camera.Position = new Point3D(_px, 1.65, _pz);
         _camera.LookDirection = new Vector3D(fwd.X, -0.08, fwd.Z);
 
@@ -752,6 +773,7 @@ public sealed class Shop3DWindow : Window
         _pz = 10;
         _focus = -1;
         _focusLabel.Text = "";
+        _settled = false; // stanza nuova: il prossimo giro deve applicare tutto
     }
 
     private static IEnumerable<Entry> ReadEntries(string? path)
@@ -898,6 +920,9 @@ public sealed class Shop3DWindow : Window
         _root.Children.Add(_focusRing);
 
         BuildExitDoor();
+
+        // le anteprime arrivano dopo: la stanza deve comparire subito
+        StartThumbnailLoad();
     }
 
     /// <summary>File sospeso davanti alla parete: anteprima/icona + nome, senza piedistallo.</summary>
@@ -905,17 +930,15 @@ public sealed class Shop3DWindow : Window
     {
         var g = new Model3DGroup();
 
-        // BackMaterial = null: visti da dietro sparirebbero col testo specchiato,
-        // meglio che si vedano solo di fronte (camminando verso il fondo)
-        var img = LoadBrush(_entries[i]);
-        if (img is not null)
-        {
-            var w = 1.5 * Math.Clamp(img.Value.aspect, 0.5, 1.8);
-            var panel = Quad(w, 1.5, x, 1.55, z, new EmissiveMaterial(img.Value.brush), facePlusZ: true);
-            panel.BackMaterial = null;
-            _modelToEntry[panel] = i;
-            g.Children.Add(panel);
-        }
+        // Pannello quadrato con segnaposto: l'anteprima vera arriva da
+        // StartThumbnailLoad e sostituisce solo il materiale, così la geometria
+        // non dipende dalle proporzioni dell'immagine (che ancora non si sanno).
+        // BackMaterial = null: visti da dietro mostrerebbero il testo specchiato.
+        var panel = Quad(1.5, 1.5, x, 1.55, z, PlaceholderMaterial(), facePlusZ: true);
+        panel.BackMaterial = null;
+        _modelToEntry[panel] = i;
+        g.Children.Add(panel);
+        _pendingThumbs.Add((i, panel));
 
         var label = TextBrush(_entries[i].Name, 26,
             Drawing.Color.FromArgb(220, 16, 18, 28), Drawing.Color.White, out var aspect);
@@ -1010,6 +1033,7 @@ public sealed class Shop3DWindow : Window
         mesh.TriangleIndices.Add(0);
         mesh.TriangleIndices.Add(3);
         mesh.TriangleIndices.Add(2);
+        mesh.Freeze(); // la geometria non cambia più: congelarla alleggerisce WPF
         return new GeometryModel3D(mesh, mat) { BackMaterial = mat };
     }
 
@@ -1103,31 +1127,90 @@ public sealed class Shop3DWindow : Window
         mesh.TriangleIndices.Add(0);
         mesh.TriangleIndices.Add(3);
         mesh.TriangleIndices.Add(2);
+        mesh.Freeze(); // la geometria non cambia più: congelarla alleggerisce WPF
         return new GeometryModel3D(mesh, mat) { BackMaterial = mat };
     }
 
-    private (ImageBrush brush, double aspect)? LoadBrush(Entry e)
+    /// <summary>Materiale neutro mostrato finché non arriva l'anteprima vera.</summary>
+    private static Material PlaceholderMaterial()
     {
-        try
-        {
-            using var bmp = ThumbnailProvider.GetThumbnail(e.FullPath, 256);
-            if (bmp is null)
-            {
-                return null;
-            }
+        var mat = new DiffuseMaterial(new SolidColorBrush(Color.FromArgb(70, 90, 95, 115)));
+        mat.Freeze();
+        return mat;
+    }
 
-            var aspect = bmp.Height == 0 ? 1.0 : (double)bmp.Width / bmp.Height;
-            return (ToBrush(bmp), aspect);
-        }
-        catch
+    /// <summary>
+    /// Carica le anteprime fuori dal thread dell'interfaccia e le innesta man
+    /// mano che arrivano. Per le CARTELLE chiede solo l'icona: farsi comporre
+    /// l'anteprima del contenuto costa oltre un secondo l'una.
+    /// </summary>
+    private void StartThumbnailLoad()
+    {
+        if (_pendingThumbs.Count == 0)
         {
-            return null;
+            return;
         }
+
+        var token = ++_thumbGeneration;
+        var jobs = _pendingThumbs
+            .Select(p => (p.Model, _entries[p.Entry].FullPath, _entries[p.Entry].IsContainer))
+            .ToArray();
+        _pendingThumbs.Clear();
+
+        Task.Run(() =>
+        {
+            foreach (var (model, path, isContainer) in jobs)
+            {
+                if (token != _thumbGeneration)
+                {
+                    return; // l'utente ha già cambiato stanza
+                }
+
+                BitmapSource? src = null;
+                try
+                {
+                    var flags = isContainer
+                        ? ThumbnailProvider.ThumbFlags.IconOnly
+                        : ThumbnailProvider.ThumbFlags.ResizeToFit;
+                    using var bmp = ThumbnailProvider.GetThumbnail(path, 256, flags);
+                    if (bmp is not null)
+                    {
+                        src = ToBitmapSource(bmp); // già freezato: attraversa i thread
+                    }
+                }
+                catch
+                {
+                    // anteprima non disponibile: resta il segnaposto
+                }
+
+                if (src is null)
+                {
+                    continue;
+                }
+
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (token != _thumbGeneration)
+                    {
+                        return;
+                    }
+
+                    // Uniform: il pannello è quadrato, l'immagine ci sta dentro
+                    // senza deformarsi qualunque siano le sue proporzioni
+                    var brush = new ImageBrush(src) { Stretch = Stretch.Uniform };
+                    brush.Freeze();
+                    var mat = new EmissiveMaterial(brush);
+                    mat.Freeze();
+                    model.Material = mat;
+                }), DispatcherPriority.Background);
+            }
+        });
     }
 
     // --- helper grafici ----------------------------------------------------
 
-    private static ImageBrush ToBrush(Drawing.Bitmap bmp)
+    /// <summary>Bitmap GDI+ -> BitmapSource freezato (si può creare fuori dal thread UI).</summary>
+    private static BitmapSource ToBitmapSource(Drawing.Bitmap bmp)
     {
         using var ms = new MemoryStream();
         bmp.Save(ms, DrawingImaging.ImageFormat.Png);
@@ -1138,16 +1221,28 @@ public sealed class Shop3DWindow : Window
         src.StreamSource = ms;
         src.EndInit();
         src.Freeze();
-        return new ImageBrush(src) { Stretch = Stretch.Uniform };
+        return src;
+    }
+
+    private static ImageBrush ToBrush(Drawing.Bitmap bmp)
+    {
+        var b = new ImageBrush(ToBitmapSource(bmp)) { Stretch = Stretch.Uniform };
+        b.Freeze();
+        return b;
     }
 
     private static ImageBrush TiledBrush(Drawing.Bitmap tile, int repeat)
     {
-        var b = ToBrush(tile);
-        b.Stretch = Stretch.Fill;
-        b.TileMode = TileMode.Tile;
-        b.Viewport = new Rect(0, 0, 1.0 / repeat, 1.0 / repeat);
-        b.ViewportUnits = BrushMappingMode.RelativeToBoundingBox;
+        // costruito e poi congelato: ToBrush restituisce un pennello già
+        // congelato, che non si potrebbe più modificare
+        var b = new ImageBrush(ToBitmapSource(tile))
+        {
+            Stretch = Stretch.Fill,
+            TileMode = TileMode.Tile,
+            Viewport = new Rect(0, 0, 1.0 / repeat, 1.0 / repeat),
+            ViewportUnits = BrushMappingMode.RelativeToBoundingBox
+        };
+        b.Freeze();
         return b;
     }
 
@@ -1193,8 +1288,10 @@ public sealed class Shop3DWindow : Window
             g.DrawString(text, font, fore, new Drawing.RectangleF(0, 0, w, h), fmt);
         }
 
-        var brush = ToBrush(bmp);
-        brush.Stretch = Stretch.Fill;
+        // costruito e congelato in un colpo: ToBrush lo restituirebbe già
+        // congelato e Stretch non sarebbe più modificabile
+        var brush = new ImageBrush(ToBitmapSource(bmp)) { Stretch = Stretch.Fill };
+        brush.Freeze();
         bmp.Dispose();
         return brush;
     }
@@ -1219,6 +1316,7 @@ public sealed class Shop3DWindow : Window
         mesh.TriangleIndices.Add(0);
         mesh.TriangleIndices.Add(3);
         mesh.TriangleIndices.Add(2);
+        mesh.Freeze();
         return new GeometryModel3D(mesh, mat)
         {
             BackMaterial = mat,
@@ -1256,6 +1354,7 @@ public sealed class Shop3DWindow : Window
             mesh.TriangleIndices.Add(i);
         }
 
+        mesh.Freeze();
         return new GeometryModel3D(mesh, mat)
         {
             Transform = new TranslateTransform3D(cx, cy, cz)
