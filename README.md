@@ -54,6 +54,35 @@ Resta residente in memoria con un'icona nell'area di notifica.
 - Si attivano dal menu tasto-destro della barra o dal menu della tray, alla voce
   **"Effetti desktop 3D"**; lo stato viene ricordato tra un avvio e l'altro.
 
+**Barra di Windows** (opzionale, di default spenta)
+
+Menu della tray → **"Barra di Windows"**.
+
+- 🖱️ **Sfoglia con la rotellina**: quando hai troppe applicazioni aperte per una riga
+  sola, Windows impagina l'elenco e ti costringe a cliccare le freccette per cambiare
+  pagina. Con questa opzione basta la **rotellina** sopra l'elenco: girandola, oppure
+  **inclinandola** di lato per chi ha il mouse col tilt. Oppure **disattivato**, e
+  restano le freccette di Windows.
+  Attivandola, **le freccette bianche vengono nascoste** perché stonano col tema; resta
+  la striscia da 17px dove stavano, che Explorer non ci lascia riutilizzare.
+
+  > **Le pagine sono sempre verticali, anche col tilt.** Le due modalità cambiano solo
+  > *quale* rotellina usi, non come Windows dispone le icone. La barra delle applicazioni
+  > **non ha lo scorrimento orizzontale**: `WS_HSCROLL` è assente e `SB_HORZ` ha corsa
+  > zero: Explorer manda le icone a capo in righe e impila le righe. Metterle in fila
+  > orizzontale vorrebbe dire rifare l'impaginazione di Explorer a ogni finestra aperta o
+  > chiusa, ed è il genere di lotta che fa cadere la shell.
+- 🎨 **Colorala come la barra a linguetta**: tinge la barra di Windows con lo stesso
+  colore scelto per la nostra. È una **tinta piatta**: Windows lascia impostare un colore
+  di sfondo della sua barra, non il gradiente in rilievo (per quello servirebbe disegnare
+  dentro Explorer, cosa che questo programma non fa di proposito).
+
+Nessuno dei due inietta codice in Explorer: si usano solo messaggi e chiamate che
+Windows consente verso finestre di altri processi (lo scorrimento manda alla barra
+lo **stesso** `WM_VSCROLL` del clic sulla freccetta). All'uscita dal programma la barra
+di Windows viene rimessa com'era; se il programma viene terminato di forza, basta
+riavviare Explorer (`Ctrl+Alt+Fine`).
+
 ---
 
 ## Installazione (utente finale)

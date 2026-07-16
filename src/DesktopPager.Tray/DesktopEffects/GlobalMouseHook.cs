@@ -10,8 +10,11 @@ namespace DesktopPager.Tray.DesktopEffects;
 /// </summary>
 internal sealed class GlobalMouseHook : IDisposable
 {
-    /// <summary>msg (WM_*), x, y schermo. Restituire true per bloccare l'evento.</summary>
-    public Func<int, int, int, bool>? OnMouse;
+    /// <summary>
+    /// msg (WM_*), x, y schermo, mouseData (delta della rotellina nella parte
+    /// alta). Restituire true per bloccare l'evento.
+    /// </summary>
+    public Func<int, int, int, uint, bool>? OnMouse;
 
     private EffectsNative.LowLevelMouseProc? _proc;
     private IntPtr _hook;
@@ -48,7 +51,7 @@ internal sealed class GlobalMouseHook : IDisposable
                 .PtrToStructure<EffectsNative.MSLLHOOKSTRUCT>(lParam);
             try
             {
-                if (OnMouse(wParam.ToInt32(), data.pt.x, data.pt.y))
+                if (OnMouse(wParam.ToInt32(), data.pt.x, data.pt.y, data.mouseData))
                 {
                     return (IntPtr)1; // consuma l'evento
                 }
