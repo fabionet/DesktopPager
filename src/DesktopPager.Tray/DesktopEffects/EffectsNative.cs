@@ -23,10 +23,32 @@ internal static class EffectsNative
     public const uint WINEVENT_OUTOFCONTEXT = 0x0000;
     public const int OBJID_WINDOW = 0;
 
+    // --- rotellina --------------------------------------------------------
+    public const int WM_MOUSEWHEEL = 0x020A;   // rotellina su/giu'
+    public const int WM_MOUSEHWHEEL = 0x020E;  // rotellina inclinata destra/sinistra
+
+    // --- scorrimento della barra delle applicazioni -----------------------
+    public const int WM_VSCROLL = 0x0115;
+    public const int WM_SETTINGCHANGE = 0x001A;
+    public const int SB_LINEUP = 0;
+    public const int SB_LINEDOWN = 1;
+    public const int SB_VERT = 1;
+    public const int SIF_RANGE = 0x0001;
+    public const int SIF_PAGE = 0x0002;
+    public const int GWL_STYLE = -16;
+    public const int WS_VSCROLL = 0x00200000;
+    public const int SMTO_ABORTIFHUNG = 0x0002;
+
+    // --- tinta della barra (accent policy non documentata, come TranslucentTB)
+    public const int WCA_ACCENT_POLICY = 19;
+    public const int ACCENT_ENABLE_GRADIENT = 1;
+    public const int ACCENT_FLAG_ALL_BORDERS = 2;
+
     // --- tasti ------------------------------------------------------------
     public const int VK_CONTROL = 0x11;
 
     public delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+    public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
     public delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType, IntPtr hwnd,
         int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
 
@@ -45,6 +67,38 @@ internal static class EffectsNative
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SCROLLINFO
+    {
+        public uint cbSize;
+        public uint fMask;
+        public int nMin;
+        public int nMax;
+        public uint nPage;
+        public int nPos;
+        public int nTrackPos;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ACCENTPOLICY
+    {
+        public int AccentState;
+        public int AccentFlags;
+        public uint GradientColor; // ABGR
+        public int AnimationId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WINCOMPATTRDATA
+    {
+        public int Attribute;
+        public IntPtr Data;
+        public int SizeOfData;
+    }
+
+    /// <summary>Delta con segno di WM_MOUSEWHEEL/WM_MOUSEHWHEEL.</summary>
+    public static int WheelDelta(uint mouseData) => (short)((mouseData >> 16) & 0xFFFF);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
@@ -97,6 +151,36 @@ internal static class EffectsNative
 
     [DllImport("gdi32.dll")]
     public static extern bool DeleteObject(IntPtr hObject);
+
+    // --- barra delle applicazioni di Windows ------------------------------
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetScrollInfo(IntPtr hWnd, int nBar, ref SCROLLINFO lpsi);
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowScrollBar(IntPtr hWnd, int wBar, bool bShow);
+
+    [DllImport("user32.dll")]
+    public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll")]
+    public static extern bool PostMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SendMessageTimeout(IntPtr hWnd, int Msg, IntPtr wParam, string? lParam,
+        int fuFlags, int uTimeout, out IntPtr lpdwResult);
+
+    [DllImport("user32.dll")]
+    public static extern int SetWindowCompositionAttribute(IntPtr hWnd, ref WINCOMPATTRDATA data);
 
     public static bool CtrlDown => (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
 }

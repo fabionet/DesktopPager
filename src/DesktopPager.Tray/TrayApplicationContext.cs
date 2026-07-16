@@ -79,6 +79,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         effectsMenu.DropDownItems.Add(cubeItem);
         effectsMenu.DropDownItems.Add(wobbleItem);
         trayMenu.Items.Add(effectsMenu);
+        trayMenu.Items.Add(BuildTaskbarMenu());
         trayMenu.Items.Add(BuildColorMenu());
         var autostartItem = new ToolStripMenuItem("Avvio automatico con Windows")
         {
@@ -134,6 +135,66 @@ public sealed class TrayApplicationContext : ApplicationContext
         _hotkeyManager.Dispose();
         _window.Dispose();
         base.ExitThreadCore();
+    }
+
+    /// <summary>
+    /// Sottomenu della barra di Windows: come sfogliare l'elenco applicazioni
+    /// quando non ci sta in una riga sola, e se colorarla come la nostra barra.
+    /// </summary>
+    private ToolStripMenuItem BuildTaskbarMenu()
+    {
+        var menu = new ToolStripMenuItem("Barra di Windows");
+
+        // Attenzione ai nomi: entrambe le modalità sfogliano le stesse pagine
+        // VERTICALI, cambia solo quale rotellina usi. Non promettere una
+        // disposizione orizzontale delle icone: la barra di Windows non ce l'ha
+        // (verificato: WS_HSCROLL assente e SB_HORZ con corsa zero). Explorer
+        // manda le icone a capo in righe e impila le righe; per metterle in fila
+        // orizzontale bisognerebbe rifargli l'impaginazione a ogni cambiamento.
+        var modes = new (string Text, string Tip, TaskbarScrollMode Mode)[]
+        {
+            ("Sfoglia girando la rotellina",
+                "Gira la rotellina sopra i pulsanti delle applicazioni per cambiare pagina.",
+                TaskbarScrollMode.Wheel),
+            ("Sfoglia inclinando la rotellina (tilt)",
+                "Come sopra, ma inclinando la rotellina di lato invece di girarla: sfoglia " +
+                "sempre le stesse pagine verticali. Richiede un mouse con la rotellina inclinabile.",
+                TaskbarScrollMode.TiltWheel),
+            ("Disattivato: freccette di Windows",
+                "Torna al metodo di Windows: si cambia pagina solo con le freccette.",
+                TaskbarScrollMode.Off)
+        };
+
+        var items = new List<ToolStripMenuItem>();
+
+        void Refresh()
+        {
+            foreach (var it in items)
+            {
+                it.Checked = it.Tag is TaskbarScrollMode m && m == _effects.TaskbarScroll;
+            }
+        }
+
+        foreach (var (text, tip, mode) in modes)
+        {
+            var item = new ToolStripMenuItem(text) { Tag = mode, ToolTipText = tip };
+            item.Click += (_, _) => { _effects.TaskbarScroll = mode; Refresh(); };
+            items.Add(item);
+            menu.DropDownItems.Add(item);
+        }
+
+        menu.DropDownItems.Add(new ToolStripSeparator());
+        var tintItem = new ToolStripMenuItem("Coloral&a come la barra a linguetta")
+        {
+            Checked = _effects.TaskbarTint,
+            CheckOnClick = true
+        };
+        tintItem.Click += (_, _) => _effects.TaskbarTint = tintItem.Checked;
+        menu.DropDownItems.Add(tintItem);
+
+        menu.DropDownOpening += (_, _) => { Refresh(); tintItem.Checked = _effects.TaskbarTint; };
+        Refresh();
+        return menu;
     }
 
     /// <summary>

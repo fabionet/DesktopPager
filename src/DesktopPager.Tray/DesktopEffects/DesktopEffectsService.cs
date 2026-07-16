@@ -22,6 +22,12 @@ public sealed class DesktopEffectsService : IDisposable
     private readonly GlobalMouseHook _mouseHook = new();
     private readonly DispatcherTimer _wobblePoll = new() { Interval = TimeSpan.FromMilliseconds(16) };
 
+    private readonly TaskbarTweaks _taskbar = new();
+    // Explorer rifa' l'impaginazione della barra quando apri/chiudi finestre e
+    // rimette le freccette: un giro al secondo basta a riprendersele senza
+    // pesare (e' solo una lettura di stile finche' non c'e' nulla da fare)
+    private readonly DispatcherTimer _taskbarPoll = new() { Interval = TimeSpan.FromSeconds(1) };
+
     private WobbleOverlay? _wobble;
     private CubeOverlay? _cube;
 
@@ -39,10 +45,14 @@ public sealed class DesktopEffectsService : IDisposable
         _moveHook.MoveStart += OnMoveStart;
         _moveHook.MoveEnd += OnMoveEnd;
         _wobblePoll.Tick += (_, _) => PollMovingWindow();
+        _taskbarPoll.Tick += (_, _) => _taskbar.Sync();
         _mouseHook.OnMouse = OnMouse;
+        BarStyle.Changed += OnBarStyleChanged;
 
         Load();
     }
+
+    private void OnBarStyleChanged() => _taskbar.RefreshTint();
 
     public bool WobbleEnabled
     {
@@ -78,20 +88,80 @@ public sealed class DesktopEffectsService : IDisposable
                 return;
             }
             _cubeEnabled = value;
-            if (value)
+            if (!value && _cubeDragging)
             {
-                _mouseHook.Install();
+                _cubeDragging = false;
+                _cube?.Cancel();
             }
-            else
-            {
-                _mouseHook.Uninstall();
-                if (_cubeDragging)
-                {
-                    _cubeDragging = false;
-                    _cube?.Cancel();
-                }
-            }
+            SyncMouseHook();
             Save();
+        }
+    }
+
+    // --- barra delle applicazioni di Windows -------------------------------
+
+    /// <summary>Come si sfoglia l'elenco applicazioni della barra di Windows.</summary>
+    public TaskbarScrollMode TaskbarScroll
+    {
+        get => _taskbar.ScrollMode;
+        set
+        {
+            if (_taskbar.ScrollMode == value)
+            {
+                return;
+            }
+            _taskbar.ScrollMode = value;
+            SyncMouseHook();
+            SyncTaskbarPoll();
+            Save();
+        }
+    }
+
+    /// <summary>Colora la barra di Windows con il colore della nostra barra.</summary>
+    public bool TaskbarTint
+    {
+        get => _taskbar.TintEnabled;
+        set
+        {
+            if (_taskbar.TintEnabled == value)
+            {
+                return;
+            }
+            _taskbar.TintEnabled = value;
+            SyncTaskbarPoll();
+            Save();
+        }
+    }
+
+    /// <summary>
+    /// Il timer serve a entrambi: alle freccette, che Explorer rimette quando
+    /// rifa' l'impaginazione, e alla tinta, che sparisce se Explorer riparte.
+    /// </summary>
+    private void SyncTaskbarPoll()
+    {
+        if (_taskbar.ScrollMode != TaskbarScrollMode.Off || _taskbar.TintEnabled)
+        {
+            _taskbarPoll.Start();
+        }
+        else
+        {
+            _taskbarPoll.Stop();
+        }
+    }
+
+    /// <summary>
+    /// L'hook del mouse serve sia al cubo sia alla rotellina sulla barra:
+    /// tienilo installato finche' almeno uno dei due lo vuole.
+    /// </summary>
+    private void SyncMouseHook()
+    {
+        if (_cubeEnabled || _taskbar.ScrollMode != TaskbarScrollMode.Off)
+        {
+            _mouseHook.Install();
+        }
+        else
+        {
+            _mouseHook.Uninstall();
         }
     }
 
@@ -137,10 +207,14 @@ public sealed class DesktopEffectsService : IDisposable
 
     // --- cubo di paginazione ----------------------------------------------
 
-    private bool OnMouse(int msg, int x, int y)
+    private bool OnMouse(int msg, int x, int y, uint mouseData)
     {
         switch (msg)
         {
+            case EffectsNative.WM_MOUSEWHEEL:
+            case EffectsNative.WM_MOUSEHWHEEL:
+                return _taskbar.HandleWheel(msg, x, y, mouseData);
+
             case EffectsNative.WM_RBUTTONDOWN:
                 if (_cubeEnabled && EffectsNative.CtrlDown && PointOnDesktop(x, y))
                 {
@@ -245,14 +319,27 @@ public sealed class DesktopEffectsService : IDisposable
                     continue;
                 }
                 var key = line[..i].Trim();
-                var on = line[(i + 1)..].Trim() == "1";
-                if (key == "wobble")
+                var value = line[(i + 1)..].Trim();
+                var on = value == "1";
+                switch (key)
                 {
-                    WobbleEnabled = on;
-                }
-                else if (key == "cube")
-                {
-                    CubeEnabled = on;
+                    case "wobble":
+                        WobbleEnabled = on;
+                        break;
+                    case "cube":
+                        CubeEnabled = on;
+                        break;
+                    case "tbscroll":
+                        TaskbarScroll = value switch
+                        {
+                            "1" => TaskbarScrollMode.Wheel,
+                            "2" => TaskbarScrollMode.TiltWheel,
+                            _ => TaskbarScrollMode.Off
+                        };
+                        break;
+                    case "tbtint":
+                        TaskbarTint = on;
+                        break;
                 }
             }
         }
@@ -268,7 +355,10 @@ public sealed class DesktopEffectsService : IDisposable
         {
             Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
             File.WriteAllText(ConfigPath,
-                $"wobble={(_wobbleEnabled ? 1 : 0)}\ncube={(_cubeEnabled ? 1 : 0)}\n");
+                $"wobble={(_wobbleEnabled ? 1 : 0)}\n" +
+                $"cube={(_cubeEnabled ? 1 : 0)}\n" +
+                $"tbscroll={(int)_taskbar.ScrollMode}\n" +
+                $"tbtint={(_taskbar.TintEnabled ? 1 : 0)}\n");
         }
         catch
         {
@@ -278,9 +368,14 @@ public sealed class DesktopEffectsService : IDisposable
 
     public void Dispose()
     {
+        BarStyle.Changed -= OnBarStyleChanged;
         _wobblePoll.Stop();
+        _taskbarPoll.Stop();
         _moveHook.Dispose();
         _mouseHook.Dispose();
+        // prima di tutto rimetti a posto la barra di Windows: e' roba di
+        // Explorer, non deve restare ritoccata dopo che siamo usciti
+        _taskbar.Dispose();
         _wobble?.Close();
         _cube?.Close();
     }
