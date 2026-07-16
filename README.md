@@ -87,7 +87,7 @@ riavviare Explorer (`Ctrl+Alt+Fine`).
 
 ## Installazione (utente finale)
 
-1. Scarica `DesktopPager3D-OS-1.2.0-Setup.msi` dalla pagina
+1. Scarica `DesktopPager3D-OS-1.3.0-Setup.msi` dalla pagina
    [Releases](https://github.com/fabionet/DesktopPager3D-OS/releases).
 2. Doppio clic sull'MSI e segui la procedura guidata (richiede i privilegi di
    amministratore perché installa in `C:\Program Files\DesktopPager3D-OS`).
