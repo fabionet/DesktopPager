@@ -1,94 +1,133 @@
+# Build completa di DesktopPager3D-OS: publish self-contained + installer MSI
+# (WiX v5), con firma opzionale di eseguibile e MSI.
+#
+#   .\scripts\build-and-package.ps1         # MSI non firmato
+#   .\scripts\build-and-package.ps1 -Sign   # firma exe e MSI col certificato FabioNET
+#
+# Prerequisiti: .NET 8 SDK e WiX v5. Vedi il README, sezione "Generare
+# l'installer MSI". Tutti i percorsi sono relativi alla radice del repository.
+
+[CmdletBinding()]
+param(
+    # Firma exe e MSI. Senza questo flag la build produce un MSI non firmato e
+    # funziona anche su macchine prive del certificato.
+    [switch]$Sign,
+    [string]$Configuration = "Release",
+    [string]$Thumbprint = "93D9C19F749ED540600AFF34E8A23DE6B7EA7DC3",
+    [string]$TimestampServer = "http://timestamp.digicert.com"
+)
+
 $ErrorActionPreference = "Stop"
 
-$repo = "C:\Users\FabioNET\Desktop\git_work_by_warp\DesktopPager"
-$project = Join-Path $repo "src\DesktopPager.Tray\DesktopPager.Tray.csproj"
-$iconScript = Join-Path $repo "scripts\create-app-icon.ps1"
-$iconSource = Join-Path $repo "src\DesktopPager.Tray\Assets\DesktopPager.ico"
-$artifacts = Join-Path $repo "artifacts"
-$publishDir = Join-Path $artifacts "publish\DesktopPager.Tray-win-x64"
-$installerDir = Join-Path $artifacts "DesktopPager-installer"
-$installerZip = Join-Path $artifacts "DesktopPager-autoinstaller-win-x64.zip"
+$repo         = Split-Path -Parent $PSScriptRoot
+$project      = Join-Path $repo "src\DesktopPager.Tray\DesktopPager.Tray.csproj"
+$wxsPath      = Join-Path $repo "installer\Product.wxs"
+$iconPath     = Join-Path $repo "src\DesktopPager.Tray\Assets\DesktopPager.ico"
+$licenseRtf   = Join-Path $repo "installer\License.rtf"
+$publishDir   = Join-Path $repo "publish"
+$installerDir = Join-Path $repo "installer"
 
-Write-Host "==> Preparing artifact directories"
-New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
+# --- Controlli preliminari (falliscono subito, prima della build lunga) -------
+
+foreach ($tool in @("dotnet", "wix")) {
+    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+        throw "Comando '$tool' non trovato nel PATH. Vedi i prerequisiti nel README."
+    }
+}
+
+foreach ($required in @($project, $wxsPath, $iconPath, $licenseRtf)) {
+    if (-not (Test-Path $required)) { throw "File richiesto non trovato: $required" }
+}
+
+$cert = $null
+if ($Sign) {
+    $cert = Get-ChildItem -Path Cert:\CurrentUser\My, Cert:\LocalMachine\My |
+            Where-Object { $_.Thumbprint -eq $Thumbprint } |
+            Select-Object -First 1
+    if (-not $cert) {
+        throw "Certificato con thumbprint $Thumbprint non trovato negli store personali. Esegui senza -Sign per un MSI non firmato."
+    }
+    if (-not $cert.HasPrivateKey) {
+        throw "Il certificato $Thumbprint non ha la chiave privata: impossibile firmare."
+    }
+    Write-Host ("==> Certificato di firma: {0}" -f $cert.Subject)
+}
+
+# --- Versione e nome dell'eseguibile: unica fonte di verita' il csproj --------
+
+$csproj = [xml](Get-Content $project -Raw)
+$version = ($csproj.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)
+$assemblyName = ($csproj.Project.PropertyGroup.AssemblyName | Where-Object { $_ } | Select-Object -First 1)
+if (-not $version)      { throw "Nessun <Version> trovato in $project" }
+if (-not $assemblyName) { throw "Nessun <AssemblyName> trovato in $project" }
+$version = $version.Trim()
+$assemblyName = $assemblyName.Trim()
+
+# La Version dentro Product.wxs finisce nel pacchetto installato, mentre il nome
+# del file MSI viene dal csproj: se divergono, il nome del file mentirebbe sul
+# contenuto e l'aggiornamento maggiore non scatterebbe come atteso.
+$wxsVersion = ([xml](Get-Content $wxsPath -Raw)).Wix.Package.Version
+if ($wxsVersion -ne $version) {
+    throw "Versione disallineata: csproj = $version, Product.wxs = $wxsVersion. Allineale prima di generare l'MSI."
+}
+
+$exePath = Join-Path $publishDir "$assemblyName.exe"
+$msiPath = Join-Path $installerDir "$assemblyName-$version-Setup.msi"
+
+Write-Host "==> DesktopPager3D-OS $version ($Configuration, win-x64)"
+
+# --- Publish self-contained ---------------------------------------------------
+
+Write-Host "==> Pubblicazione self-contained"
 if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
-if (Test-Path $installerDir) { Remove-Item $installerDir -Recurse -Force }
-New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
-New-Item -ItemType Directory -Path $installerDir -Force | Out-Null
 
-if (Test-Path $iconScript) {
-    Write-Host "==> Generating app icon"
-    powershell -ExecutionPolicy Bypass -File $iconScript
+dotnet publish $project -c $Configuration -r win-x64 --self-contained true -o $publishDir
+if ($LASTEXITCODE -ne 0) { throw "dotnet publish fallito (exit code $LASTEXITCODE)" }
+if (-not (Test-Path $exePath)) { throw "Eseguibile atteso non prodotto: $exePath" }
+
+# --- Firma dell'eseguibile (prima della build MSI, che lo incorpora) ----------
+
+function Invoke-SignFile([string]$path) {
+    $result = Set-AuthenticodeSignature -FilePath $path -Certificate $cert `
+                                        -HashAlgorithm SHA256 -TimestampServer $TimestampServer
+    if ($result.Status -ne "Valid") {
+        throw ("Firma fallita per {0}: {1}" -f $path, $result.StatusMessage)
+    }
+    Write-Host ("    firmato: {0}" -f (Split-Path -Leaf $path))
 }
 
-Write-Host "==> Building and publishing (Release, win-x64, self-contained, single-file)"
-dotnet publish $project `
-  -c Release `
-  -r win-x64 `
-  --self-contained true `
-  /p:PublishSingleFile=true `
-  /p:PublishTrimmed=false `
-  -o $publishDir
-
-Write-Host "==> Preparing installer payload"
-Copy-Item -Path "$publishDir\*" -Destination $installerDir -Recurse -Force
-if (Test-Path $iconSource) {
-    Copy-Item -Path $iconSource -Destination (Join-Path $installerDir "DesktopPager.ico") -Force
+if ($Sign) {
+    Write-Host "==> Firma dell'eseguibile"
+    Invoke-SignFile $exePath
 }
 
-$installPs1 = @"
-`$ErrorActionPreference = 'Stop'
-`$sourceDir = Split-Path -Parent `$MyInvocation.MyCommand.Path
-`$targetDir = Join-Path `$env:LOCALAPPDATA 'DesktopPager'
-`$startMenuDir = Join-Path `$env:APPDATA 'Microsoft\Windows\Start Menu\Programs\DesktopPager'
-`$exePath = Join-Path `$targetDir 'DesktopPager.Tray.exe'
-`$iconPath = Join-Path `$targetDir 'DesktopPager.ico'
+# --- Build dell'MSI -----------------------------------------------------------
 
-New-Item -ItemType Directory -Path `$targetDir -Force | Out-Null
-Copy-Item -Path (Join-Path `$sourceDir '*') -Destination `$targetDir -Recurse -Force
+Write-Host "==> Build dell'installer MSI (WiX v5)"
+if (Test-Path $msiPath) { Remove-Item $msiPath -Force }
 
-New-Item -ItemType Directory -Path `$startMenuDir -Force | Out-Null
-`$shortcutPath = Join-Path `$startMenuDir 'DesktopPager.lnk'
-`$wsh = New-Object -ComObject WScript.Shell
-`$shortcut = `$wsh.CreateShortcut(`$shortcutPath)
-`$shortcut.TargetPath = `$exePath
-`$shortcut.WorkingDirectory = `$targetDir
-if (Test-Path `$iconPath) {
-  `$shortcut.IconLocation = `$iconPath
-} else {
-  `$shortcut.IconLocation = `$exePath
+& wix build $wxsPath `
+    -ext WixToolset.UI.wixext `
+    -d "PublishDir=$publishDir" `
+    -d "IconPath=$iconPath" `
+    -d "LicenseRtf=$licenseRtf" `
+    -o $msiPath
+if ($LASTEXITCODE -ne 0) { throw "wix build fallito (exit code $LASTEXITCODE)" }
+if (-not (Test-Path $msiPath)) { throw "MSI atteso non prodotto: $msiPath" }
+
+if ($Sign) {
+    Write-Host "==> Firma dell'MSI"
+    Invoke-SignFile $msiPath
 }
-`$shortcut.Save()
 
-Write-Host "DesktopPager installato in: `$targetDir"
-Write-Host "Avvio da Start Menu > DesktopPager"
-"@
-
-$uninstallPs1 = @"
-`$targetDir = Join-Path `$env:LOCALAPPDATA 'DesktopPager'
-`$startMenuDir = Join-Path `$env:APPDATA 'Microsoft\Windows\Start Menu\Programs\DesktopPager'
-
-if (Test-Path `$targetDir) { Remove-Item `$targetDir -Recurse -Force }
-if (Test-Path `$startMenuDir) { Remove-Item `$startMenuDir -Recurse -Force }
-Write-Host "DesktopPager disinstallato."
-"@
-
-$installCmd = @"
-@echo off
-powershell -ExecutionPolicy Bypass -File "%~dp0install.ps1"
-pause
-"@
-
-Set-Content -Path (Join-Path $installerDir "install.ps1") -Value $installPs1 -Encoding UTF8
-Set-Content -Path (Join-Path $installerDir "uninstall.ps1") -Value $uninstallPs1 -Encoding UTF8
-Set-Content -Path (Join-Path $installerDir "install.cmd") -Value $installCmd -Encoding ASCII
-
-Write-Host "==> Creating installer zip"
-if (Test-Path $installerZip) { Remove-Item $installerZip -Force }
-Compress-Archive -Path "$installerDir\*" -DestinationPath $installerZip -Force
+# --- Riepilogo ----------------------------------------------------------------
 
 Write-Host ""
-Write-Host "Build and packaging completed."
-Write-Host "Publish output : $publishDir"
-Write-Host "Installer folder: $installerDir"
-Write-Host "Installer zip   : $installerZip"
+Write-Host "Build completata."
+Write-Host "  Publish : $publishDir"
+Write-Host "  MSI     : $msiPath"
+if ($Sign) {
+    Write-Host "  Firma   : exe e MSI firmati ($($cert.Subject))"
+} else {
+    Write-Host "  Firma   : nessuna (riesegui con -Sign per firmare)"
+}

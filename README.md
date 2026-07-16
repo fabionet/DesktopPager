@@ -128,6 +128,27 @@ dotnet test tests/DesktopPager.Tray.Tests/DesktopPager.Tray.Tests.csproj -c Rele
 ```
 
 ### Generare l'installer MSI
+Lo script `scripts/build-and-package.ps1` esegue l'intero percorso (pubblicazione
+self-contained + build dell'MSI) con percorsi relativi al repository. Versione e
+nome dell'eseguibile vengono letti dal `.csproj`, quindi non serve aggiornarli a mano.
+
+```powershell
+# MSI non firmato (non serve il certificato)
+.\scripts\build-and-package.ps1
+
+# firma anche l'eseguibile e l'MSI (certificato CN=FabioNET nello store personale)
+.\scripts\build-and-package.ps1 -Sign
+```
+
+L'MSI viene prodotto in `installer\DesktopPager3D-OS-<versione>-Setup.msi`.
+
+> La firma usa `Set-AuthenticodeSignature` con SHA256 e marca temporale. L'eseguibile
+> viene firmato **prima** della build dell'MSI, in modo che l'MSI incorpori un binario
+> già firmato. Le release pubblicate sono sempre generate con `-Sign`.
+
+<details>
+<summary>Comandi equivalenti, senza lo script</summary>
+
 ```
 # 1) pubblicazione self-contained
 dotnet publish src/DesktopPager.Tray/DesktopPager.Tray.csproj -c Release -r win-x64 --self-contained true -o publish
@@ -137,8 +158,13 @@ wix build installer/Product.wxs -ext WixToolset.UI.wixext ^
   -d "PublishDir=%CD%\publish" ^
   -d "IconPath=%CD%\src\DesktopPager.Tray\Assets\DesktopPager.ico" ^
   -d "LicenseRtf=%CD%\installer\License.rtf" ^
-  -o "installer\DesktopPager3D-OS-1.0.0-Setup.msi"
+  -o "installer\DesktopPager3D-OS-1.3.0-Setup.msi"
 ```
+</details>
+
+> **Nota sulla versione:** il numero è duplicato in `DesktopPager.Tray.csproj`
+> (`<Version>`) e in `installer/Product.wxs` (`Version=`). Lo script si ferma con un
+> errore se i due divergono: aggiornali insieme.
 
 ### Versione nativa C++ (opzionale, componente leggero solo-pager)
 In `src/DesktopPager.NativeCpp`. Build con MinGW/w64devkit:

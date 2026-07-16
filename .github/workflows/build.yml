@@ -1,0 +1,49 @@
+# Verifica che il percorso di build documentato regga ancora: pubblicazione
+# self-contained + installer MSI, tramite lo stesso script usato in locale.
+# La firma NON viene eseguita: il certificato di FabioNET non è disponibile
+# sui runner, quindi qui gira il percorso senza -Sign.
+name: build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  build-msi:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Installa WiX v5
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      # Step separato: il PATH aggiornato sopra ha effetto solo dallo step successivo.
+      - name: Aggiungi l'estensione WiX UI
+        run: wix extension add -g WixToolset.UI.wixext/5.0.2
+
+      - name: Test
+        run: dotnet test tests/DesktopPager.Tray.Tests/DesktopPager.Tray.Tests.csproj -c Release
+
+      - name: Build dell'MSI (non firmato)
+        run: .\scripts\build-and-package.ps1
+
+      - name: Pubblica l'MSI come artefatto
+        uses: actions/upload-artifact@v4
+        with:
+          name: DesktopPager3D-OS-msi-non-firmato
+          path: installer/*.msi
+          if-no-files-found: error
