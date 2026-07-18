@@ -135,9 +135,13 @@ public sealed class Shop3DWindow : Window
     // che si apre come una porta, con barra di avanzamento del caricamento
     private readonly Grid _rootGrid = new();
     private readonly Grid _loadingOverlay = new();
-    private readonly Canvas _logoCanvas = new();
-    private readonly WpfPolygon[] _logoPanes = new WpfPolygon[4]; // facce trapezoidali
-    private WpfPolygon? _logoCore;                                 // cubo interno
+    // Il logo di caricamento è un tesseratto TRIDIMENSIONALE (non un disegno
+    // piatto): un ipercubo a reticolo — cubo esterno, cubo interno concentrico e
+    // gli 8 spigoli di collegamento — reso in un piccolo Viewport3D che ruota di
+    // continuo mostrando la sua profondità reale.
+    private readonly Viewport3D _logoViewport = new();
+    private readonly AxisAngleRotation3D _logoSpin = new(new Vector3D(0.18, 1, 0.06), 0);
+    private readonly ScaleTransform _logoScale = new(1, 1);
     private readonly WpfRectangle _progressFill = new();
     private const double ProgressWidth = 340;
     private bool _introDone;
@@ -247,10 +251,11 @@ public sealed class Shop3DWindow : Window
 
     // --- ingresso cinematografico -----------------------------------------
 
-    private const double LogoSize = 178;   // lato del quadrato esterno del tesseratto
-    private const double LogoInset = 50;   // rientro del cubo interno
+    private const double LogoView = 240;   // lato del riquadro 3D del logo (px)
 
     private static Color Rgb((byte R, byte G, byte B) c) => Color.FromRgb(c.R, c.G, c.B);
+    private static Material Emis((byte R, byte G, byte B) c) =>
+        new EmissiveMaterial(new SolidColorBrush(Rgb(c)));
 
     private void BuildIntroOverlays()
     {
@@ -258,61 +263,31 @@ public sealed class Shop3DWindow : Window
         _loadingOverlay.Background = System.Windows.Media.Brushes.Black;
         _loadingOverlay.Visibility = Visibility.Collapsed;
 
-        // tesseratto (ipercubo) colorato, centrato: cubo esterno + cubo interno
-        // + spigoli di collegamento. Le 4 facce trapezoidali sono i battenti
-        // della "porta" che si apre.
-        _logoCanvas.Width = LogoSize;
-        _logoCanvas.Height = LogoSize;
-        _logoCanvas.HorizontalAlignment = HorizontalAlignment.Center;
-        _logoCanvas.VerticalAlignment = VerticalAlignment.Center;
-        _logoCanvas.Margin = new Thickness(0, 0, 0, 90);
+        // tesseratto (ipercubo) TRIDIMENSIONALE, centrato: un reticolo di cubo
+        // esterno + cubo interno + 8 spigoli di collegamento, in un Viewport3D
+        // che ruota su sé stesso rivelando la sua profondità reale.
+        _logoViewport.Width = LogoView;
+        _logoViewport.Height = LogoView;
+        _logoViewport.HorizontalAlignment = HorizontalAlignment.Center;
+        _logoViewport.VerticalAlignment = VerticalAlignment.Center;
+        _logoViewport.Margin = new Thickness(0, 0, 0, 90);
+        _logoViewport.IsHitTestVisible = false;
+        _logoViewport.RenderTransformOrigin = new Point(0.5, 0.5);
+        _logoViewport.RenderTransform = _logoScale; // zoom "dentro" il logo a fine intro
+        RenderOptions.SetEdgeMode(_logoViewport, EdgeMode.Aliased);
 
-        const double s = LogoSize;
-        const double m = LogoInset;
-        var oTL = new Point(0, 0);
-        var oTR = new Point(s, 0);
-        var oBR = new Point(s, s);
-        var oBL = new Point(0, s);
-        var iTL = new Point(m, m);
-        var iTR = new Point(s - m, m);
-        var iBR = new Point(s - m, s - m);
-        var iBL = new Point(m, s - m);
-
-        // su fondo nero gli spigoli chiari fanno risaltare il reticolo
-        var edge = new SolidColorBrush(Color.FromRgb(0xF2, 0xF5, 0xFF));
-
-        (Point[] pts, Color col)[] faces =
+        // camera rialzata di tre quarti: la rotazione rivela subito la profondità
+        _logoViewport.Camera = new PerspectiveCamera
         {
-            (new[] { oTL, oTR, iTR, iTL }, Rgb(TesseractPalette.Top)),
-            (new[] { oTR, oBR, iBR, iTR }, Rgb(TesseractPalette.Right)),
-            (new[] { oBR, oBL, iBL, iBR }, Rgb(TesseractPalette.Bottom)),
-            (new[] { oBL, oTL, iTL, iBL }, Rgb(TesseractPalette.Left))
+            Position = new Point3D(0, 0.75, 2.4),
+            LookDirection = new Vector3D(0, -0.28, -1),
+            UpDirection = new Vector3D(0, 1, 0),
+            FieldOfView = 45
         };
-        for (var i = 0; i < 4; i++)
-        {
-            var pane = new WpfPolygon
-            {
-                Points = new PointCollection(faces[i].pts),
-                Fill = new SolidColorBrush(faces[i].col),
-                Stroke = edge,
-                StrokeThickness = 2.5,
-                RenderTransform = new TranslateTransform()
-            };
-            _logoPanes[i] = pane;
-            _logoCanvas.Children.Add(pane);
-        }
 
-        // cubo interno: resta fermo mentre i battenti si aprono, poi vola
-        // verso lo spettatore (si attraversa l'ipercubo)
-        _logoCore = new WpfPolygon
-        {
-            Points = new PointCollection(new[] { iTL, iTR, iBR, iBL }),
-            Fill = new SolidColorBrush(Rgb(TesseractPalette.Core)),
-            Stroke = edge,
-            StrokeThickness = 2.5,
-            RenderTransform = new ScaleTransform(1, 1, s / 2, s / 2)
-        };
-        _logoCanvas.Children.Add(_logoCore);
+        var logoModel = BuildTesseractModel();
+        logoModel.Transform = new RotateTransform3D(_logoSpin);
+        _logoViewport.Children.Add(new ModelVisual3D { Content = logoModel });
 
         // barra di avanzamento sotto il logo
         var track = new System.Windows.Controls.Border
@@ -344,9 +319,83 @@ public sealed class Shop3DWindow : Window
             Margin = new Thickness(0, 205, 0, 0)
         };
 
-        _loadingOverlay.Children.Add(_logoCanvas);
+        _loadingOverlay.Children.Add(_logoViewport);
         _loadingOverlay.Children.Add(track);
         _loadingOverlay.Children.Add(loadText);
+    }
+
+    // --- tesseratto 3D del logo -------------------------------------------
+
+    /// <summary>
+    /// Ipercubo a reticolo: cubo esterno, cubo interno (più piccolo, concentrico)
+    /// e gli 8 spigoli che uniscono i vertici corrispondenti — la proiezione
+    /// classica del tesseratto. Ogni spigolo è una sottile barra 3D emissiva, così
+    /// risalta sul nero e ha volume vero anche da fermo.
+    /// </summary>
+    private Model3DGroup BuildTesseractModel()
+    {
+        var g = new Model3DGroup();
+
+        var outer = CubeCorners(0.5);
+        var inner = CubeCorners(0.28);
+        var edges = CubeEdges();
+
+        var outerMat = Emis(TesseractPalette.Edge);
+        var innerMat = Emis(TesseractPalette.Core);
+        var linkMats = new[]
+        {
+            Emis(TesseractPalette.Top), Emis(TesseractPalette.Right),
+            Emis(TesseractPalette.Bottom), Emis(TesseractPalette.Left)
+        };
+
+        foreach (var (a, b) in edges)
+        {
+            g.Children.Add(EdgeBar(outer[a], outer[b], 0.035, outerMat));
+            g.Children.Add(EdgeBar(inner[a], inner[b], 0.030, innerMat));
+        }
+
+        for (var i = 0; i < 8; i++)
+        {
+            g.Children.Add(EdgeBar(outer[i], inner[i], 0.028, linkMats[i % 4]));
+        }
+
+        return g;
+    }
+
+    private static Point3D[] CubeCorners(double s) => new[]
+    {
+        new Point3D(-s, -s, -s), new Point3D(s, -s, -s), new Point3D(s, s, -s), new Point3D(-s, s, -s),
+        new Point3D(-s, -s, s), new Point3D(s, -s, s), new Point3D(s, s, s), new Point3D(-s, s, s)
+    };
+
+    private static (int A, int B)[] CubeEdges() => new (int, int)[]
+    {
+        (0, 1), (1, 2), (2, 3), (3, 0), // faccia z-
+        (4, 5), (5, 6), (6, 7), (7, 4), // faccia z+
+        (0, 4), (1, 5), (2, 6), (3, 7)  // montanti
+    };
+
+    /// <summary>Spigolo come sottile barra 3D orientata dal punto a al punto b.</summary>
+    private static GeometryModel3D EdgeBar(Point3D a, Point3D b, double thick, Material mat)
+    {
+        var dir = b - a;
+        var len = dir.Length;
+        var bar = Box(thick, len, thick, 0, 0, 0, mat); // barra centrata sull'origine, alta lungo Y
+
+        var d = dir;
+        d.Normalize();
+        var axis = Vector3D.CrossProduct(new Vector3D(0, 1, 0), d);
+        if (axis.Length < 1e-6)
+        {
+            axis = new Vector3D(1, 0, 0); // già parallela a Y: un asse qualsiasi va bene
+        }
+
+        var angle = Math.Acos(Math.Clamp(Vector3D.DotProduct(new Vector3D(0, 1, 0), d), -1, 1)) * 180 / Math.PI;
+        var tg = new Transform3DGroup();
+        tg.Children.Add(new RotateTransform3D(new AxisAngleRotation3D(axis, angle)));
+        tg.Children.Add(new TranslateTransform3D((a.X + b.X) / 2, (a.Y + b.Y) / 2, (a.Z + b.Z) / 2));
+        bar.Transform = tg;
+        return bar;
     }
 
     private void PlayIntro()
@@ -357,26 +406,16 @@ public sealed class Shop3DWindow : Window
         _camera.Position = new Point3D(0, 15, -1);
         _camera.LookDirection = new Vector3D(0, -1, -0.18);
 
-        // reset tesseratto e barra
-        foreach (var pane in _logoPanes)
-        {
-            pane.Opacity = 1;
-            var t = (TranslateTransform)pane.RenderTransform;
-            t.BeginAnimation(TranslateTransform.XProperty, null);
-            t.BeginAnimation(TranslateTransform.YProperty, null);
-            t.X = 0;
-            t.Y = 0;
-        }
-        if (_logoCore is not null)
-        {
-            _logoCore.Opacity = 1;
-            _logoCore.BeginAnimation(OpacityProperty, null);
-            var cs = (ScaleTransform)_logoCore.RenderTransform;
-            cs.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-            cs.BeginAnimation(ScaleTransform.ScaleYProperty, null);
-            cs.ScaleX = 1;
-            cs.ScaleY = 1;
-        }
+        // reset del logo 3D: azzera zoom/opacità e (ri)avvia la rotazione continua
+        _logoViewport.Opacity = 1;
+        _logoViewport.BeginAnimation(OpacityProperty, null);
+        _logoScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        _logoScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        _logoScale.ScaleX = 1;
+        _logoScale.ScaleY = 1;
+        _logoSpin.BeginAnimation(AxisAngleRotation3D.AngleProperty,
+            new DoubleAnimation(0, 360, TimeSpan.FromSeconds(7)) { RepeatBehavior = RepeatBehavior.Forever });
+
         _progressFill.Width = 0;
         _loadingOverlay.Opacity = 1;
         _loadingOverlay.Visibility = Visibility.Visible;
@@ -405,30 +444,14 @@ public sealed class Shop3DWindow : Window
 
     private void OpenLogoDoor()
     {
-        var dur = TimeSpan.FromMilliseconds(1600);
+        // fase finale: si "vola dentro" il tesseratto — il logo 3D ingrandisce e
+        // sfuma mentre il nero svanisce e compare la stanza. La rotazione continua
+        // avviata in PlayIntro resta attiva e dà il senso di attraversarlo.
         var ease = new CubicEase { EasingMode = EasingMode.EaseIn };
-        var spread = Math.Max(ActualWidth, ActualHeight);
-
-        // ogni faccia trapezoidale esce dal proprio lato (alto/destra/basso/sinistra)
-        (double dx, double dy)[] dir =
-        {
-            (0, -spread), (spread, 0), (0, spread), (-spread, 0)
-        };
-        for (var i = 0; i < 4; i++)
-        {
-            var t = (TranslateTransform)_logoPanes[i].RenderTransform;
-            t.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0, dir[i].dx, dur) { EasingFunction = ease });
-            t.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, dir[i].dy, dur) { EasingFunction = ease });
-        }
-
-        // il cubo interno ingrandisce fino ad avvolgere lo spettatore e svanisce
-        if (_logoCore is not null)
-        {
-            var cs = (ScaleTransform)_logoCore.RenderTransform;
-            cs.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, 9, dur) { EasingFunction = ease });
-            cs.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1, 9, dur) { EasingFunction = ease });
-            _logoCore.BeginAnimation(OpacityProperty, Fade(1, 0, 1300));
-        }
+        var dur = TimeSpan.FromMilliseconds(1500);
+        _logoScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, 8, dur) { EasingFunction = ease });
+        _logoScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1, 8, dur) { EasingFunction = ease });
+        _logoViewport.BeginAnimation(OpacityProperty, Fade(1, 0, 1300));
     }
 
     private void LandCamera()
@@ -452,6 +475,7 @@ public sealed class Shop3DWindow : Window
         // libera la camera dalle animazioni e passa al controllo manuale
         _camera.BeginAnimation(PerspectiveCamera.PositionProperty, null);
         _camera.BeginAnimation(PerspectiveCamera.LookDirectionProperty, null);
+        _logoSpin.BeginAnimation(AxisAngleRotation3D.AngleProperty, null); // ferma il logo, ora nascosto
         _loadingOverlay.Visibility = Visibility.Collapsed;
         _px = 0;
         _pz = 10;
