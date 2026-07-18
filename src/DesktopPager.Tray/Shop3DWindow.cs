@@ -363,7 +363,9 @@ public sealed class Shop3DWindow : Window
         var inner = CubeCorners(0.28);
         var edges = CubeEdges();
 
-        var outerMat = Emis(TesseractPalette.Edge);
+        // spigoli del cubo esterno chiari: il fondo dell'intro è nero, il colore
+        // Edge della palette (quasi nero, per la moneta su fondo chiaro) sparirebbe
+        var outerMat = Emis((0xF2, 0xF5, 0xFF));
         var innerMat = Emis(TesseractPalette.Core);
         var linkMats = new[]
         {
