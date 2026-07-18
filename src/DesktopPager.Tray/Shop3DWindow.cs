@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -71,6 +72,7 @@ public sealed class Shop3DWindow : Window
 
     private readonly TextBlock _pathLabel;
     private readonly TextBlock _focusLabel;
+    private readonly System.Windows.Shapes.Ellipse _crosshair = new();
 
     private readonly List<Entry> _entries = new();
     private readonly List<Point3D> _boothPos = new();
@@ -101,6 +103,18 @@ public sealed class Shop3DWindow : Window
     private double _lastPx, _lastPz, _lastYaw; // ultimo stato applicato: da fermi si salta il giro
     private bool _settled;
     private double _roomHalfW, _roomBackZ;
+
+    // --- mouse-look (FPS) --------------------------------------------------
+    // Il mouse gira la vista a 360° (yaw) e la inclina su/giù (pitch): così si
+    // possono inquadrare le porte sulle pareti e la porta di uscita in fondo,
+    // cosa impossibile con la sola rotazione lenta delle frecce e il pitch
+    // fisso di prima. Il cursore viene nascosto e ri-centrato a ogni movimento
+    // (stile videogioco): la finestra è a schermo intero, quindi non esce mai.
+    private const double MouseSensitivity = 0.0022; // radianti per pixel
+    private const double PitchLimit = 1.30;          // ~74°: evita il gimbal a ±90°
+    private double _pitch;                             // + = verso l'alto
+    private double _lastPitch;
+    private bool _mouseLook;                           // attivo solo dopo l'intro
 
     // porta di uscita: un tesseratto sulla parete di fondo che si apre
     // avvicinandosi, oltre il quale si vede il desktop; entrandoci parte uno
@@ -159,8 +173,8 @@ public sealed class Shop3DWindow : Window
         var hint = Hud(12, FontWeights.Normal, HorizontalAlignment.Center, VerticalAlignment.Bottom,
             new Thickness(0, 0, 0, 22));
         hint.Foreground = new SolidColorBrush(Color.FromRgb(150, 150, 165));
-        hint.Text = "frecce / WASD = muoviti e gira   •   Invio = entra o apri   •   Backspace = indietro   •   "
-                    + "porta in fondo o Esc = torna al desktop";
+        hint.Text = "mouse = guardati intorno (360°)   •   WASD / frecce = muoviti   •   Invio o clic = entra o apri   •   "
+                    + "Backspace = indietro   •   porta in fondo o Esc = torna al desktop";
 
         // istantanea del desktop PRIMA che questa finestra lo copra: è ciò che
         // si vedrà oltre la porta di uscita e nello zoom finale
@@ -183,6 +197,20 @@ public sealed class Shop3DWindow : Window
         _rootGrid.Children.Add(_pathLabel);
         _rootGrid.Children.Add(_focusLabel);
         _rootGrid.Children.Add(hint);
+
+        // mirino: col cursore nascosto dal mouse-look serve un riferimento per
+        // sapere dove punta il clic (che seleziona ciò che sta al centro)
+        _crosshair.Width = 7;
+        _crosshair.Height = 7;
+        _crosshair.HorizontalAlignment = HorizontalAlignment.Center;
+        _crosshair.VerticalAlignment = VerticalAlignment.Center;
+        _crosshair.Fill = new SolidColorBrush(Color.FromArgb(200, 245, 248, 255));
+        _crosshair.Stroke = new SolidColorBrush(Color.FromArgb(140, 0, 0, 0));
+        _crosshair.StrokeThickness = 1;
+        _crosshair.IsHitTestVisible = false;
+        _crosshair.Visibility = Visibility.Collapsed; // compare a fine intro
+        _rootGrid.Children.Add(_crosshair);
+
         BuildIntroOverlays();
         _rootGrid.Children.Add(_loadingOverlay);
         _rootGrid.Children.Add(_exitZoom);
@@ -196,7 +224,7 @@ public sealed class Shop3DWindow : Window
         PreviewKeyDown += OnKeyDown;
         KeyUp += (_, e) => _keys.Remove(e.Key);
         MouseLeftButtonUp += OnClick;
-        Closed += (_, _) => _loop.Stop();
+        Closed += (_, _) => { _loop.Stop(); DisableMouseLook(); };
     }
 
     private static TextBlock Hud(double size, FontWeight weight, HorizontalAlignment h, VerticalAlignment v, Thickness margin)
@@ -428,11 +456,14 @@ public sealed class Shop3DWindow : Window
         _px = 0;
         _pz = 10;
         _yaw = 0;
+        _pitch = 0;
         _introDone = true;
         if (!_loop.IsEnabled)
         {
             _loop.Start();
         }
+
+        EnableMouseLook();
     }
 
     private static DoubleAnimation Fade(double from, double to, int ms) =>
@@ -495,6 +526,94 @@ public sealed class Shop3DWindow : Window
         }
     }
 
+    // --- mouse-look --------------------------------------------------------
+
+    private void EnableMouseLook()
+    {
+        if (_mouseLook)
+        {
+            return;
+        }
+
+        _mouseLook = true;
+        Cursor = System.Windows.Input.Cursors.None; // nascondi il puntatore
+        _crosshair.Visibility = Visibility.Visible;
+        MouseMove += OnMouseMove;
+        WarpToCenter();
+    }
+
+    private void DisableMouseLook()
+    {
+        if (!_mouseLook)
+        {
+            return;
+        }
+
+        _mouseLook = false;
+        MouseMove -= OnMouseMove;
+        _crosshair.Visibility = Visibility.Collapsed;
+        Cursor = System.Windows.Input.Cursors.Arrow;
+    }
+
+    /// <summary>Centro del viewport in pixel fisici (PointToScreen tiene conto del DPI).</summary>
+    private Point CenterScreenPoint() =>
+        _viewport.PointToScreen(new Point(_viewport.ActualWidth / 2, _viewport.ActualHeight / 2));
+
+    private void WarpToCenter()
+    {
+        if (_viewport.ActualWidth <= 0)
+        {
+            return;
+        }
+
+        var c = CenterScreenPoint();
+        SetCursorPos((int)Math.Round(c.X), (int)Math.Round(c.Y));
+    }
+
+    private void OnMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        // Fuori dall'esplorazione (intro, zoom d'uscita) o se la finestra non è
+        // attiva non si ruota: altrimenti ri-centrare il cursore darebbe
+        // fastidio mentre si è altrove (Alt+Tab).
+        if (!_mouseLook || !_introDone || _exiting || !IsActive)
+        {
+            return;
+        }
+
+        var c = CenterScreenPoint();
+        if (!GetCursorPos(out var p))
+        {
+            return;
+        }
+
+        var dx = p.X - c.X;
+        var dy = p.Y - c.Y;
+        if (dx == 0 && dy == 0)
+        {
+            return; // è il movimento causato dal nostro stesso ri-centraggio
+        }
+
+        _yaw += dx * MouseSensitivity;
+        _pitch = Math.Clamp(_pitch - dy * MouseSensitivity, -PitchLimit, PitchLimit);
+
+        // ri-porta il cursore al centro: lo spostamento diventa "relativo",
+        // così si può girare all'infinito senza uscire dallo schermo
+        SetCursorPos((int)Math.Round(c.X), (int)Math.Round(c.Y));
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out NativePoint point);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetCursorPos(int x, int y);
+
     private void Tick()
     {
         if (!_introDone || _exiting)
@@ -517,9 +636,9 @@ public sealed class Shop3DWindow : Window
         _pz = Math.Clamp(_pz, _roomBackZ + 1.2, 11);
 
         // Da fermi non cambia nulla: banchi, messa a fuoco e porte dipendono
-        // solo dalla posizione. Saltare il giro evita di sporcare l'albero di
-        // rendering 60 volte al secondo per niente.
-        if (_settled && _px == _lastPx && _pz == _lastPz && _yaw == _lastYaw)
+        // solo dalla posizione e dall'orientamento. Saltare il giro evita di
+        // sporcare l'albero di rendering 30 volte al secondo per niente.
+        if (_settled && _px == _lastPx && _pz == _lastPz && _yaw == _lastYaw && _pitch == _lastPitch)
         {
             return;
         }
@@ -527,10 +646,14 @@ public sealed class Shop3DWindow : Window
         _lastPx = _px;
         _lastPz = _pz;
         _lastYaw = _yaw;
+        _lastPitch = _pitch;
         _settled = true;
 
+        // Il moto resta sul piano (fwd/right sono orizzontali: non si "vola"),
+        // ma lo sguardo segue anche il pitch, così si guarda su e giù.
+        var cosP = Math.Cos(_pitch);
         _camera.Position = new Point3D(_px, 1.65, _pz);
-        _camera.LookDirection = new Vector3D(fwd.X, -0.08, fwd.Z);
+        _camera.LookDirection = new Vector3D(fwd.X * cosP, Math.Sin(_pitch), fwd.Z * cosP);
 
         UpdateBoothScale();
         UpdateFocus();
@@ -622,6 +745,7 @@ public sealed class Shop3DWindow : Window
         }
         _exiting = true;
         _keys.Clear();
+        DisableMouseLook(); // basta ri-centrare il cursore: parte lo zoom
 
         if (_desktopShot is null)
         {
