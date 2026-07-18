@@ -58,6 +58,7 @@ public sealed class Shop3DWindow : Window
     private const int TickMs = 33;
     private const double MoveSpeed = 0.13 * TickMs / 16.0;
     private const double TurnSpeed = 0.035 * TickMs / 16.0; // radianti/tick
+    private const double SprintFactor = 2.4; // tasto E tenuto premuto: passo più veloce nei corridoi lunghi
 
     // rimpicciolimento dei banchi all'avvicinarsi (così restano leggibili per intero)
     private const double ShrinkNear = 3.0;   // sotto questa distanza scala minima
@@ -73,6 +74,8 @@ public sealed class Shop3DWindow : Window
     private readonly TextBlock _pathLabel;
     private readonly TextBlock _focusLabel;
     private readonly System.Windows.Shapes.Ellipse _crosshair = new();
+    private readonly System.Windows.Controls.Border _mapOverlay = new(); // mappa 3D del percorso (tasto Q)
+    private bool _mapVisible;
 
     private readonly List<Entry> _entries = new();
     private readonly List<Point3D> _boothPos = new();
@@ -177,8 +180,8 @@ public sealed class Shop3DWindow : Window
         var hint = Hud(12, FontWeights.Normal, HorizontalAlignment.Center, VerticalAlignment.Bottom,
             new Thickness(0, 0, 0, 22));
         hint.Foreground = new SolidColorBrush(Color.FromRgb(150, 150, 165));
-        hint.Text = "mouse = guardati intorno (360°)   •   WASD / frecce = muoviti   •   Invio o clic = entra o apri   •   "
-                    + "Backspace = indietro   •   porta in fondo o Esc = torna al desktop";
+        hint.Text = "mouse = guardati intorno (360°)   •   WASD / frecce = muoviti   •   E = corri   •   Q = mappa percorso   •   "
+                    + "Invio o clic = entra o apri   •   Backspace = indietro   •   porta in fondo o Esc = torna al desktop";
 
         // istantanea del desktop PRIMA che questa finestra lo copra: è ciò che
         // si vedrà oltre la porta di uscita e nello zoom finale
@@ -214,6 +217,24 @@ public sealed class Shop3DWindow : Window
         _crosshair.IsHitTestVisible = false;
         _crosshair.Visibility = Visibility.Collapsed; // compare a fine intro
         _rootGrid.Children.Add(_crosshair);
+
+        // mappa 3D del percorso (tasto Q): un pannello inclinato in prospettiva
+        // (PlaneProjection) con la scia di cartelle dalla radice fino a dove sei.
+        _mapOverlay.HorizontalAlignment = HorizontalAlignment.Right;
+        _mapOverlay.VerticalAlignment = VerticalAlignment.Center;
+        _mapOverlay.Margin = new Thickness(0, 0, 70, 0);
+        _mapOverlay.Padding = new Thickness(18);
+        _mapOverlay.CornerRadius = new CornerRadius(14);
+        _mapOverlay.Background = new SolidColorBrush(Color.FromArgb(214, 14, 18, 28));
+        _mapOverlay.BorderBrush = new SolidColorBrush(Color.FromArgb(150, 120, 160, 220));
+        _mapOverlay.BorderThickness = new Thickness(1);
+        _mapOverlay.IsHitTestVisible = false;
+        _mapOverlay.Visibility = Visibility.Collapsed;
+        // taglio obliquo (proiezione "cavaliera"): insieme all'indentazione dei
+        // nodi dà alla scia l'aspetto di una mappa 3D che entra nella scena
+        _mapOverlay.RenderTransformOrigin = new Point(1, 0.5);
+        _mapOverlay.RenderTransform = new SkewTransform(0, -10);
+        _rootGrid.Children.Add(_mapOverlay);
 
         BuildIntroOverlays();
         _rootGrid.Children.Add(_loadingOverlay);
@@ -276,13 +297,15 @@ public sealed class Shop3DWindow : Window
         _logoViewport.RenderTransform = _logoScale; // zoom "dentro" il logo a fine intro
         RenderOptions.SetEdgeMode(_logoViewport, EdgeMode.Aliased);
 
-        // camera rialzata di tre quarti: la rotazione rivela subito la profondità
+        // vista di tre quarti, da uno spigolo in alto: il cubo interno si vede
+        // SEMPRE angolato — larghezza, altezza e profondità insieme — mai di
+        // faccia. La rotazione poi ne accentua la tridimensionalità.
         _logoViewport.Camera = new PerspectiveCamera
         {
-            Position = new Point3D(0, 0.75, 2.4),
-            LookDirection = new Vector3D(0, -0.28, -1),
+            Position = new Point3D(1.9, 1.5, 2.3),
+            LookDirection = new Vector3D(-1.9, -1.5, -2.3), // punta all'origine
             UpDirection = new Vector3D(0, 1, 0),
-            FieldOfView = 45
+            FieldOfView = 40
         };
 
         var logoModel = BuildTesseractModel();
@@ -546,8 +569,90 @@ public sealed class Shop3DWindow : Window
         {
             case Key.Enter: ActivateFocus(); return;
             case Key.Back: GoUp(); return;
+            case Key.Q: ToggleMap(); return;
             default: _keys.Add(e.Key); break;
         }
+    }
+
+    // --- mappa 3D del percorso (tasto Q) ----------------------------------
+
+    private void ToggleMap()
+    {
+        _mapVisible = !_mapVisible;
+        if (_mapVisible)
+        {
+            BuildPathMap();
+        }
+
+        _mapOverlay.Visibility = _mapVisible ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Popola la mappa con la scia di cartelle dalla radice ("Questo PC") fino
+    /// alla posizione corrente: ogni tappa è un nodo, quello attuale evidenziato,
+    /// e l'indentazione crescente più l'inclinazione danno il senso di profondità.
+    /// </summary>
+    private void BuildPathMap()
+    {
+        var stack = new StackPanel { Orientation = System.Windows.Controls.Orientation.Vertical };
+
+        stack.Children.Add(new TextBlock
+        {
+            Text = "🧭 Mappa del percorso",
+            Foreground = Brushes.White,
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 18,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 12)
+        });
+
+        var segments = PathSegments(_current);
+        for (var i = 0; i < segments.Count; i++)
+        {
+            var isCurrent = i == segments.Count - 1;
+            var node = new System.Windows.Controls.Border
+            {
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(12, 7, 14, 7),
+                Margin = new Thickness(i * 18, 3, 0, 3), // a scalare: la scia "entra" nella scena
+                Background = new SolidColorBrush(isCurrent
+                    ? Color.FromArgb(235, 53, 157, 224)
+                    : Color.FromArgb(150, 40, 48, 66)),
+                Child = new TextBlock
+                {
+                    Text = (isCurrent ? "📍 " : i == 0 ? "🏠 " : "📂 ") + segments[i],
+                    Foreground = Brushes.White,
+                    FontFamily = new FontFamily("Segoe UI"),
+                    FontSize = isCurrent ? 15 : 14,
+                    FontWeight = isCurrent ? FontWeights.SemiBold : FontWeights.Normal
+                }
+            };
+            stack.Children.Add(node);
+        }
+
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Q = chiudi",
+            Foreground = new SolidColorBrush(Color.FromRgb(150, 150, 165)),
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 11,
+            Margin = new Thickness(0, 12, 0, 0)
+        });
+
+        _mapOverlay.Child = stack;
+    }
+
+    /// <summary>Tappe del percorso: "Questo PC" + i segmenti della cartella corrente.</summary>
+    private static List<string> PathSegments(string? path)
+    {
+        var list = new List<string> { "Questo PC" };
+        if (string.IsNullOrEmpty(path))
+        {
+            return list;
+        }
+
+        list.AddRange(path.TrimEnd('\\').Split('\\', StringSplitOptions.RemoveEmptyEntries));
+        return list;
     }
 
     // --- mouse-look --------------------------------------------------------
@@ -648,12 +753,15 @@ public sealed class Shop3DWindow : Window
         var fwd = new Vector3D(Math.Sin(_yaw), 0, -Math.Cos(_yaw));
         var right = new Vector3D(Math.Cos(_yaw), 0, Math.Sin(_yaw));
 
+        // E tenuto premuto: corri (passo più lungo per i corridoi lunghi)
+        var move = _keys.Contains(Key.E) ? MoveSpeed * SprintFactor : MoveSpeed;
+
         if (_keys.Contains(Key.Left)) _yaw -= TurnSpeed;
         if (_keys.Contains(Key.Right)) _yaw += TurnSpeed;
-        if (_keys.Contains(Key.Up) || _keys.Contains(Key.W)) { _px += fwd.X * MoveSpeed; _pz += fwd.Z * MoveSpeed; }
-        if (_keys.Contains(Key.Down) || _keys.Contains(Key.S)) { _px -= fwd.X * MoveSpeed; _pz -= fwd.Z * MoveSpeed; }
-        if (_keys.Contains(Key.A)) { _px -= right.X * MoveSpeed; _pz -= right.Z * MoveSpeed; }
-        if (_keys.Contains(Key.D)) { _px += right.X * MoveSpeed; _pz += right.Z * MoveSpeed; }
+        if (_keys.Contains(Key.Up) || _keys.Contains(Key.W)) { _px += fwd.X * move; _pz += fwd.Z * move; }
+        if (_keys.Contains(Key.Down) || _keys.Contains(Key.S)) { _px -= fwd.X * move; _pz -= fwd.Z * move; }
+        if (_keys.Contains(Key.A)) { _px -= right.X * move; _pz -= right.Z * move; }
+        if (_keys.Contains(Key.D)) { _px += right.X * move; _pz += right.Z * move; }
 
         // resta dentro la stanza
         _px = Math.Clamp(_px, -_roomHalfW + 1, _roomHalfW - 1);
@@ -933,6 +1041,11 @@ public sealed class Shop3DWindow : Window
         _focus = -1;
         _focusLabel.Text = "";
         _settled = false; // stanza nuova: il prossimo giro deve applicare tutto
+
+        if (_mapVisible)
+        {
+            BuildPathMap(); // aggiorna la scia se la mappa è aperta
+        }
     }
 
     private static IEnumerable<Entry> ReadEntries(string? path)
