@@ -119,6 +119,20 @@ public sealed class Shop3DWindow : Window
     private double _lastPitch;
     private bool _mouseLook;                           // attivo solo dopo l'intro
 
+    // --- head-bob (emulazione del passo, stile FPS) -----------------------
+    // La telecamera ondeggia su/giù e di lato mentre si cammina, come la testa
+    // di chi cammina; la cadenza segue la distanza percorsa (più rapida in
+    // corsa) e si smorza dolcemente da fermo.
+    private const double BobAmpY = 0.055;         // ampiezza verticale (m)
+    private const double BobAmpX = 0.040;         // oscillazione laterale (m)
+    private const double BobCyclesPerMeter = 3.9; // ~1,6 m per ciclo completo
+    private double _bobPhase;                       // fase del passo (radianti)
+    private double _bobLevel;                       // 0..1: sale camminando, scende da fermo
+    private double _lastBobY, _lastBobX;            // ultimo bob applicato (per il guard)
+
+    // cursore integrato: Tab passa da mouse-look a puntatore per usare l'overlay
+    private bool _cursorMode;
+
     // porta di uscita: un tesseratto sulla parete di fondo che si apre
     // avvicinandosi, oltre il quale si vede il desktop; entrandoci parte uno
     // zoom che riporta al desktop reale
@@ -180,8 +194,8 @@ public sealed class Shop3DWindow : Window
         var hint = Hud(12, FontWeights.Normal, HorizontalAlignment.Center, VerticalAlignment.Bottom,
             new Thickness(0, 0, 0, 22));
         hint.Foreground = new SolidColorBrush(Color.FromRgb(150, 150, 165));
-        hint.Text = "mouse = guardati intorno (360°)   •   WASD / frecce = muoviti   •   E = corri   •   Q = mappa percorso   •   "
-                    + "Invio o clic = entra o apri   •   Backspace = indietro   •   porta in fondo o Esc = torna al desktop";
+        hint.Text = "mouse = guardati intorno (360°)   •   WASD / frecce = cammina   •   E = corri   •   Q = mappa   •   "
+                    + "Tab = cursore per la mappa   •   Invio o clic = apri   •   Backspace = indietro   •   Esc = esci";
 
         // istantanea del desktop PRIMA che questa finestra lo copra: è ciò che
         // si vedrà oltre la porta di uscita e nello zoom finale
@@ -572,6 +586,7 @@ public sealed class Shop3DWindow : Window
             case Key.Enter: ActivateFocus(); return;
             case Key.Back: GoUp(); return;
             case Key.Q: ToggleMap(); return;
+            case Key.Tab: e.Handled = true; SetCursorMode(!_cursorMode); return;
             default: _keys.Add(e.Key); break;
         }
     }
@@ -629,6 +644,23 @@ public sealed class Shop3DWindow : Window
                     FontWeight = isCurrent ? FontWeights.SemiBold : FontWeights.Normal
                 }
             };
+
+            // cliccabile in modalità cursore (Tab): salta alla cartella di questa
+            // tappa. Il percorso è la radice + i segmenti fino a qui.
+            string? target = null;
+            if (i > 0)
+            {
+                target = string.Join("\\", segments.GetRange(1, i));
+                if (target.EndsWith(":"))
+                {
+                    target += "\\"; // "C:" -> "C:\" (radice del disco)
+                }
+            }
+
+            var captured = target;
+            node.Cursor = System.Windows.Input.Cursors.Hand;
+            node.MouseLeftButtonUp += (_, _) => Navigate(captured);
+
             stack.Children.Add(node);
         }
 
@@ -684,6 +716,36 @@ public sealed class Shop3DWindow : Window
         MouseMove -= OnMouseMove;
         _crosshair.Visibility = Visibility.Collapsed;
         Cursor = System.Windows.Input.Cursors.Arrow;
+    }
+
+    /// <summary>
+    /// Tab: alterna mouse-look e cursore. In modalità cursore il puntatore è
+    /// visibile, la rotazione col mouse è sospesa e la mappa (Q) diventa
+    /// cliccabile per saltare a una cartella del percorso. Il movimento con
+    /// tastiera (WASD/frecce, E per correre) resta attivo in entrambe.
+    /// </summary>
+    private void SetCursorMode(bool on)
+    {
+        if (_cursorMode == on || !_introDone || _exiting)
+        {
+            return;
+        }
+
+        _cursorMode = on;
+        if (on)
+        {
+            DisableMouseLook();               // mostra il cursore, ferma la rotazione col mouse
+            _mapOverlay.IsHitTestVisible = true;
+            if (!_mapVisible)
+            {
+                ToggleMap();                  // apri la mappa: è ciò con cui si interagisce
+            }
+        }
+        else
+        {
+            _mapOverlay.IsHitTestVisible = false;
+            EnableMouseLook();                // rinascondi il cursore e riprendi il mouse-look
+        }
     }
 
     /// <summary>Centro del viewport in pixel fisici (PointToScreen tiene conto del DPI).</summary>
@@ -769,10 +831,31 @@ public sealed class Shop3DWindow : Window
         _px = Math.Clamp(_px, -_roomHalfW + 1, _roomHalfW - 1);
         _pz = Math.Clamp(_pz, _roomBackZ + 1.2, 11);
 
-        // Da fermi non cambia nulla: banchi, messa a fuoco e porte dipendono
-        // solo dalla posizione e dall'orientamento. Saltare il giro evita di
-        // sporcare l'albero di rendering 30 volte al secondo per niente.
-        if (_settled && _px == _lastPx && _pz == _lastPz && _yaw == _lastYaw && _pitch == _lastPitch)
+        // head-bob: la fase avanza con la distanza percorsa (2 "passi" per ciclo,
+        // da cui il seno a frequenza doppia sull'asse verticale), il livello sale
+        // camminando e scende da fermo per un avvio/arresto morbido.
+        var walking = _keys.Contains(Key.Up) || _keys.Contains(Key.W) ||
+                      _keys.Contains(Key.Down) || _keys.Contains(Key.S) ||
+                      _keys.Contains(Key.A) || _keys.Contains(Key.D);
+        _bobLevel += ((walking ? 1.0 : 0.0) - _bobLevel) * 0.15;
+        if (_bobLevel < 0.001)
+        {
+            _bobLevel = 0;
+        }
+
+        if (walking)
+        {
+            _bobPhase += move * BobCyclesPerMeter;
+        }
+
+        var bobY = Math.Sin(_bobPhase * 2) * BobAmpY * _bobLevel;
+        var bobX = Math.Cos(_bobPhase) * BobAmpX * _bobLevel;
+
+        // Da fermi (e senza bob residuo) non cambia nulla: banchi, messa a fuoco
+        // e porte dipendono solo da posizione e orientamento. Saltare il giro
+        // evita di sporcare l'albero di rendering 30 volte al secondo per niente.
+        if (_settled && _px == _lastPx && _pz == _lastPz && _yaw == _lastYaw && _pitch == _lastPitch
+            && bobY == _lastBobY && bobX == _lastBobX)
         {
             return;
         }
@@ -781,12 +864,14 @@ public sealed class Shop3DWindow : Window
         _lastPz = _pz;
         _lastYaw = _yaw;
         _lastPitch = _pitch;
+        _lastBobY = bobY;
+        _lastBobX = bobX;
         _settled = true;
 
         // Il moto resta sul piano (fwd/right sono orizzontali: non si "vola"),
-        // ma lo sguardo segue anche il pitch, così si guarda su e giù.
+        // ma lo sguardo segue anche il pitch e la testa ondeggia col passo.
         var cosP = Math.Cos(_pitch);
-        _camera.Position = new Point3D(_px, 1.65, _pz);
+        _camera.Position = new Point3D(_px + right.X * bobX, 1.65 + bobY, _pz + right.Z * bobX);
         _camera.LookDirection = new Vector3D(fwd.X * cosP, Math.Sin(_pitch), fwd.Z * cosP);
 
         UpdateBoothScale();
